@@ -1,5 +1,6 @@
 import { useMemo, useRef, useState } from 'react'
-import type { VisionCaptureResult } from '../types'
+import { supabase } from '../lib/supabase'
+import type { CollectionType, VisionCaptureResult } from '../types'
 
 // Cards (and the owner name) read with confidence below this threshold get
 // flagged for the user to manually confirm present/absent before saving,
@@ -7,6 +8,8 @@ import type { VisionCaptureResult } from '../types'
 const CONFIRM_THRESHOLD = 0.85
 
 type ReviewCard = VisionCaptureResult['cards'][number] & { confirmed: boolean }
+
+const COLLECTION_TYPES: CollectionType[] = ['baseball', 'football', 'basketball', 'non-sport']
 
 export default function Capture() {
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -17,6 +20,13 @@ export default function Capture() {
   const [ownerName, setOwnerName] = useState('')
   const [ownerConfirmed, setOwnerConfirmed] = useState(false)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
+  // Vision capture doesn't determine the sport — the same blank numeric checklist
+  // template looks the same for baseball/football/basketball. User picks it so we
+  // know which `collections.type` to file the set under and which bundled checklist
+  // (api/lib/checklists/) to check for real player names.
+  const [collectionType, setCollectionType] = useState<CollectionType>('baseball')
+  const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
+  const [saveMsg, setSaveMsg] = useState<string | null>(null)
 
   async function handleFile(file: File) {
     setPreview(URL.createObjectURL(file))
@@ -61,6 +71,97 @@ export default function Capture() {
 
   function confirmCard(index: number) {
     setCards((prev) => prev.map((c, i) => (i === index ? { ...c, confirmed: true } : c)))
+  }
+
+  async function handleSave() {
+    if (!result || !readyToSave) return
+    setSaveState('saving')
+    setSaveMsg(null)
+
+    try {
+      // 1. Check the bundled checklist library for this exact sport/year/manufacturer.
+      //    If it's been sourced before (e.g. 1991 Fleer baseball), this comes back with
+      //    real player names for every card number — no manual SQL, every time.
+      let realNames: Record<string, string> = {}
+      let checklistFound = false
+      try {
+        const lookupRes = await fetch('/api/checklist-lookup', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            sport: collectionType,
+            year: result.year,
+            manufacturer: result.manufacturer,
+          }),
+        })
+        if (lookupRes.ok) {
+          const lookupData = await lookupRes.json()
+          checklistFound = !!lookupData.found
+          realNames = lookupData.names ?? {}
+        }
+      } catch {
+        // Network hiccup on the lookup shouldn't block saving the scan itself.
+      }
+
+      // 2. Find-or-create the collection for this sport.
+      const collectionName = `${collectionType[0].toUpperCase()}${collectionType.slice(1)} Cards`
+      const { data: existingCollection } = await supabase
+        .from('collections')
+        .select('id')
+        .eq('type', collectionType)
+        .limit(1)
+        .maybeSingle()
+
+      let collectionId = existingCollection?.id as string | undefined
+      if (!collectionId) {
+        const { data: newCollection, error: collectionErr } = await supabase
+          .from('collections')
+          .insert({ name: collectionName, type: collectionType })
+          .select('id')
+          .single()
+        if (collectionErr || !newCollection) throw new Error(collectionErr?.message ?? 'Could not create collection')
+        collectionId = newCollection.id
+      }
+
+      // 3. Create the set.
+      const setName = result.detected_set_name ?? `${result.year ?? 'Unknown year'} ${result.manufacturer ?? 'Unknown'}`
+      const { data: newSet, error: setErr } = await supabase
+        .from('sets')
+        .insert({
+          collection_id: collectionId,
+          name: setName,
+          year: result.year,
+          manufacturer: result.manufacturer,
+          total_card_count: cards.length,
+          owner: ownerName || null,
+        })
+        .select('id')
+        .single()
+      if (setErr || !newSet) throw new Error(setErr?.message ?? 'Could not create set')
+
+      // 4. Insert cards — real checklist name wins when we have one, otherwise fall back
+      //    to whatever Vision read off the photo (often just the card number, since these
+      //    checklists are blank numeric templates with no printed names).
+      const cardRows = cards.map((c) => ({
+        set_id: newSet.id,
+        card_number: c.card_number,
+        player_or_subject_name: realNames[c.card_number] ?? c.player_or_subject_name,
+        owned: c.owned,
+      }))
+      const { error: cardsErr } = await supabase.from('cards').insert(cardRows)
+      if (cardsErr) throw new Error(cardsErr.message)
+
+      const namedCount = cardRows.filter((c) => realNames[c.card_number]).length
+      setSaveState('saved')
+      setSaveMsg(
+        checklistFound
+          ? `Saved ${cardRows.length} cards — real player names auto-filled for ${namedCount}/${cardRows.length} from the bundled checklist.`
+          : `Saved ${cardRows.length} cards. No bundled checklist found yet for ${result.year ?? '?'} ${result.manufacturer ?? 'this set'} — names are best-effort from the photo until one is added.`,
+      )
+    } catch (err) {
+      setSaveState('error')
+      setSaveMsg(err instanceof Error ? err.message : 'Save failed')
+    }
   }
 
   return (
@@ -113,6 +214,24 @@ export default function Capture() {
               Couldn't auto-detect the set — you'll be able to pick it manually before saving.
             </p>
           )}
+
+          {/* Sport / collection type — Vision can't tell this from a blank numeric
+              checklist template, and it determines both which collection the set files
+              under and which bundled checklist gets checked for real player names. */}
+          <div className="flex items-center gap-2 text-sm">
+            <span className="text-slate-500">Sport:</span>
+            <select
+              value={collectionType}
+              onChange={(e) => setCollectionType(e.target.value as CollectionType)}
+              className="text-sm border border-slate-300 dark:border-slate-700 rounded-md px-2 py-1 bg-transparent"
+            >
+              {COLLECTION_TYPES.map((t) => (
+                <option key={t} value={t}>
+                  {t}
+                </option>
+              ))}
+            </select>
+          </div>
 
           {/* Owner confirmation — handwritten name in the corner of the checklist */}
           <div className="rounded-md bg-slate-50 dark:bg-slate-900 p-3 space-y-2">
@@ -193,11 +312,24 @@ export default function Capture() {
           </ul>
 
           <button
-            disabled={!readyToSave}
+            onClick={handleSave}
+            disabled={!readyToSave || saveState === 'saving' || saveState === 'saved'}
             className="w-full text-xs px-3 py-2 rounded-md bg-indigo-600 text-white disabled:opacity-40"
           >
-            {readyToSave ? 'Save to collection' : 'Confirm all flagged cards to save'}
+            {saveState === 'saving'
+              ? 'Saving…'
+              : saveState === 'saved'
+                ? 'Saved'
+                : readyToSave
+                  ? 'Save to collection'
+                  : 'Confirm all flagged cards to save'}
           </button>
+
+          {saveMsg && (
+            <p className={`text-xs ${saveState === 'error' ? 'text-red-500' : 'text-slate-500'}`}>
+              {saveMsg}
+            </p>
+          )}
         </div>
       )}
     </div>

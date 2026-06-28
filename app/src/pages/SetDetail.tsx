@@ -22,13 +22,23 @@ export default function SetDetail() {
       setLoading(true)
       const [setRes, cardsRes] = await Promise.all([
         supabase.from('sets').select('*').eq('id', setId).single(),
-        // `cards_with_latest_price` view joins cards -> most recent card_prices row per card
-        supabase.from('cards_with_latest_price').select('*').eq('set_id', setId).order('card_number'),
+        // `cards_with_latest_price` view joins cards -> most recent card_prices row per card.
+        // card_number is `text`, so ordering server-side sorts lexicographically ("10"
+        // before "2") — sort numerically client-side instead, below.
+        supabase.from('cards_with_latest_price').select('*').eq('set_id', setId),
       ])
 
       if (cancelled) return
       if (setRes.data) setSet(setRes.data as CardSet)
-      if (cardsRes.data) setCards(cardsRes.data as CardRow[])
+      if (cardsRes.data) {
+        const sorted = [...(cardsRes.data as CardRow[])].sort((a, b) => {
+          const an = parseInt(a.card_number, 10)
+          const bn = parseInt(b.card_number, 10)
+          if (!Number.isNaN(an) && !Number.isNaN(bn) && an !== bn) return an - bn
+          return a.card_number.localeCompare(b.card_number, undefined, { numeric: true })
+        })
+        setCards(sorted)
+      }
       setLoading(false)
     }
 
