@@ -18,6 +18,7 @@ export interface CardSet {
   manufacturer: string | null
   total_card_count: number | null
   source_checklist_url: string | null
+  owner: string | null
   created_at: string
 }
 
@@ -61,14 +62,32 @@ export interface SetWithProgress extends CardSet {
   completion_pct: number
 }
 
+// One row per owner, aggregated across all of their sets (see owner_summary
+// view in supabase/migrations/0004_owner.sql)
+export interface OwnerSummary {
+  owner: string
+  set_count: number
+  total_owned_cards: number
+  total_owned_value: number
+}
+
 // Shape returned by the Claude Vision capture endpoint (api/vision-capture.ts)
 export interface VisionCaptureResult {
   detected_set_name: string | null
   detected_set_confidence: number
   manufacturer: string | null
   year: number | null
+  // Handwritten name in the corner of the checklist identifying whose
+  // collection this set belongs to (e.g. "Joe", "Paul", "Tim", "Dan").
+  owner_name: string | null
+  owner_confidence: number
   cards: Array<{
     card_number: string
     player_or_subject_name: string
+    // Per-card confidence that the X/blank mark was read correctly. Cards
+    // below the confirmation threshold get flagged in Capture.tsx for the
+    // user to manually confirm present/absent before saving.
+    presence_confidence: number
+    owned: boolean
   }>
 }

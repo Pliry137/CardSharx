@@ -22,20 +22,41 @@ const SYSTEM_PROMPT = `You are looking at either:
 (a) a paper checklist for a trading card set, or
 (b) the front or back of an individual trading card.
 
+If this is a paper checklist, it may also have a handwritten name in a
+corner of the page (e.g. "Joe", "Paul", "Tim", "Dan") identifying whose
+collection this checklist belongs to. Read that name if present.
+
+For each individual card slot on the checklist, determine whether it is
+marked present (an X or checkmark drawn in/over the cell) or absent (blank
+cell). Give your own confidence for EACH card's present/absent read — do not
+just give one confidence for the whole set. Marks that are faint, smudged,
+overlapping an adjacent cell, or ambiguous should get a low confidence score
+so the app can ask a human to confirm them rather than silently guessing.
+
 Extract structured data and return ONLY valid JSON matching this shape:
 {
   "detected_set_name": string | null,
   "detected_set_confidence": number,   // 0.0–1.0, how confident you are in the set match
   "manufacturer": string | null,        // e.g. "Topps", "Pro Set"
   "year": number | null,
+  "owner_name": string | null,          // handwritten name in the corner, if present
+  "owner_confidence": number,           // 0.0–1.0, confidence in the owner name read
   "cards": [
-    { "card_number": string, "player_or_subject_name": string }
+    {
+      "card_number": string,
+      "player_or_subject_name": string,
+      "owned": boolean,                 // true if marked present (X/check), false if blank
+      "presence_confidence": number     // 0.0–1.0, confidence in THIS card's owned read
+    }
   ]
 }
 
 If you cannot confidently identify the set, set detected_set_name to null and
 detected_set_confidence to a low value (< 0.5) rather than guessing — the app will
-fall back to letting the user pick the set manually.`
+fall back to letting the user pick the set manually. The same rule applies to
+owner_name and to each card's presence_confidence: when in doubt, score it low
+rather than asserting a guess. Cards below the confirmation threshold (see
+Capture.tsx, default 0.85) will be shown to the user to confirm by hand.`
 
 async function readBody(req: VercelRequest): Promise<{ base64: string; mimeType: string }> {
   // In production: parse the multipart form (e.g. with `formidable` or `busboy`),

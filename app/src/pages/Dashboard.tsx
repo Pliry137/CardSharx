@@ -18,6 +18,7 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [typeFilter, setTypeFilter] = useState<CollectionType | 'all'>('all')
+  const [ownerFilter, setOwnerFilter] = useState<string | 'all'>('all')
   const [sortKey, setSortKey] = useState<SortKey>('value')
 
   useEffect(() => {
@@ -47,18 +48,30 @@ export default function Dashboard() {
     }
   }, [])
 
+  const owners = useMemo(
+    () => Array.from(new Set(sets.map((s) => s.owner).filter((o): o is string => !!o))).sort(),
+    [sets],
+  )
+
   const filteredAndSorted = useMemo(() => {
-    const filtered =
+    let filtered =
       typeFilter === 'all'
         ? sets
         : sets.filter((s) => (s as SetWithProgress & { collection_type?: string }).collection_type === typeFilter)
 
+    if (ownerFilter !== 'all') {
+      filtered = filtered.filter((s) => s.owner === ownerFilter)
+    }
+
     return [...filtered].sort((a, b) =>
       sortKey === 'value' ? b.owned_value - a.owned_value : b.completion_pct - a.completion_pct,
     )
-  }, [sets, typeFilter, sortKey])
+  }, [sets, typeFilter, ownerFilter, sortKey])
 
-  const totalValue = useMemo(() => sets.reduce((sum, s) => sum + s.owned_value, 0), [sets])
+  const totalValue = useMemo(
+    () => filteredAndSorted.reduce((sum, s) => sum + s.owned_value, 0),
+    [filteredAndSorted],
+  )
 
   return (
     <div className="space-y-4">
@@ -95,6 +108,35 @@ export default function Dashboard() {
           <option value="completion">Sort: closest to complete</option>
         </select>
       </section>
+
+      {owners.length > 0 && (
+        <section className="flex flex-wrap gap-1 items-center">
+          <span className="text-xs text-slate-500 mr-1">Owner:</span>
+          <button
+            onClick={() => setOwnerFilter('all')}
+            className={`text-xs px-3 py-1.5 rounded-full border ${
+              ownerFilter === 'all'
+                ? 'bg-indigo-600 text-white border-indigo-600'
+                : 'border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300'
+            }`}
+          >
+            all
+          </button>
+          {owners.map((o) => (
+            <button
+              key={o}
+              onClick={() => setOwnerFilter(o)}
+              className={`text-xs px-3 py-1.5 rounded-full border ${
+                ownerFilter === o
+                  ? 'bg-indigo-600 text-white border-indigo-600'
+                  : 'border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300'
+              }`}
+            >
+              {o}
+            </button>
+          ))}
+        </section>
+      )}
 
       {loading && <p className="text-sm text-slate-400">Loading sets…</p>}
       {error && (
