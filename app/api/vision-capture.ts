@@ -96,18 +96,29 @@ async function readBody(req: VercelRequest): Promise<ParsedImage> {
 }
 
 function extractJson(raw: string): unknown {
-  // Despite instructions, models sometimes wrap JSON in markdown fences — strip them
-  // before parsing rather than failing the whole capture over formatting.
-  const cleaned = raw
+  // Despite instructions, models sometimes wrap JSON in markdown fences, or add a
+  // sentence of commentary before/after it. Strip fences, then fall back to slicing
+  // out the outermost {...} span so leading/trailing prose doesn't break the parse.
+  let cleaned = raw
     .trim()
     .replace(/^```(?:json)?\s*/i, '')
     .replace(/```\s*$/, '')
     .trim()
 
+  const firstBrace = cleaned.indexOf('{')
+  const lastBrace = cleaned.lastIndexOf('}')
+  if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+    cleaned = cleaned.slice(firstBrace, lastBrace + 1)
+  }
+
   try {
     return JSON.parse(cleaned)
-  } catch {
-    throw new Error("Could not parse Claude's response as JSON")
+  } catch (err) {
+    // Surface a snippet of the actual response in the error so Vercel logs show *why*
+    // parsing failed (truncation, stray commentary, etc.) instead of just that it did.
+    const snippet = cleaned.length > 1500 ? `${cleaned.slice(0, 700)} ...[${cleaned.length} chars total]... ${cleaned.slice(-700)}` : cleaned
+    const reason = err instanceof Error ? err.message : String(err)
+    throw new Error(`Could not parse Claude's response as JSON (${reason}). Raw response: ${snippet}`)
   }
 }
 
@@ -137,7 +148,7 @@ async function callClaudeVision(base64Image: string, mimeType: AnthropicImageMed
 
   const message = await client.messages.create({
     model: MODEL,
-    max_tokens: 4096,
+    max_tokens: 8192,
     system: SYSTEM_PROMPT,
     messages: [
       {
