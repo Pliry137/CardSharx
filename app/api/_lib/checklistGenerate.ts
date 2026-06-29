@@ -16,7 +16,12 @@
 // verified = false and surfaced to Joe as "please double-check" in Capture.tsx.
 import Anthropic from '@anthropic-ai/sdk'
 
-const MODEL = 'claude-sonnet-4-6'
+// Haiku, not Sonnet — this is a recall task (well-documented public checklists), not
+// complex reasoning, and the result is already cached + flagged "unverified, please
+// double-check" in Capture.tsx regardless of which model generates it. Haiku costs a
+// fraction of Sonnet per output token, which matters here since large vintage sets
+// (700+ cards) can use most of the 16k output budget below.
+const MODEL = 'claude-haiku-4-5-20251001'
 
 const SYSTEM_PROMPT = `You are an expert trading card hobby historian. You will be given a sport, year, and manufacturer for a specific base card set. Provide its full official checklist: card number mapped to the player or subject's name, exactly as it would appear printed on the card.
 
