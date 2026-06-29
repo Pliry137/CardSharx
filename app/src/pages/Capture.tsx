@@ -1,6 +1,6 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
-import type { CollectionType, VisionCaptureResult } from '../types'
+import type { CollectionType, ScanBatch, ScanBatchPageResult, VisionCaptureResult } from '../types'
 import { COLUMNS_PER_ROW, cardNumberForCell } from '../lib/checklistGrid'
 
 // Cards (and the owner name) read with confidence below this threshold get
@@ -54,10 +54,203 @@ export default function Capture() {
   // show "#121 — Claude: missing, now: present" as text instead.
   const [lastTappedIndex, setLastTappedIndex] = useState<number | null>(null)
 
+  // Multi-page scan batch state — only set when the current upload is a PDF, which
+  // may contain several checklist sheets (see api/scan-batch-create.ts /
+  // api/scan-batch-page.ts). A plain photo/image upload never sets these and uses
+  // the original single-shot /api/vision-capture flow below instead.
+  const [batchId, setBatchId] = useState<string | null>(null)
+  const [batchTotalPages, setBatchTotalPages] = useState<number | null>(null)
+  const [batchFilename, setBatchFilename] = useState<string | null>(null)
+  const [currentPageNumber, setCurrentPageNumber] = useState<number | null>(null)
+  // Transient status text shown between sheets ("Saved sheet 3 of 12 — moving to
+  // sheet 4 of 12.") and on batch completion.
+  const [batchMsg, setBatchMsg] = useState<string | null>(null)
+  // An in_progress batch found on page load (from a previous session, possibly a
+  // different device) that the user can jump back into instead of re-uploading.
+  const [resumableBatch, setResumableBatch] = useState<{
+    batch: ScanBatch
+    nextPage: number
+    pendingCount: number
+  } | null>(null)
+
+  // On mount, check whether there's an unfinished multi-page upload to offer to
+  // resume. Batch progress lives in the database (not browser-only state), so this
+  // works even after closing the tab or switching devices.
+  useEffect(() => {
+    checkForResumableBatch()
+  }, [])
+
+  async function checkForResumableBatch() {
+    const { data: batch } = await supabase
+      .from('scan_batches')
+      .select('*')
+      .eq('status', 'in_progress')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    if (!batch) return
+
+    const { data: pendingPages, count } = await supabase
+      .from('scan_batch_pages')
+      .select('page_number', { count: 'exact' })
+      .eq('batch_id', batch.id)
+      .eq('status', 'pending')
+      .order('page_number')
+
+    if (!pendingPages || pendingPages.length === 0) return
+    setResumableBatch({ batch, nextPage: pendingPages[0].page_number, pendingCount: count ?? pendingPages.length })
+  }
+
+  // Populates all the review state (cards, owner, total-count box, etc.) from a
+  // freshly-read sheet — shared by the single-shot flow and every batch page load,
+  // so a batch page behaves identically to a standalone upload once it's loaded.
+  function applyCaptureResult(data: VisionCaptureResult) {
+    setResult(data)
+    setRawCards(data.cards)
+    setCards(
+      data.cards.map((c) => ({
+        ...c,
+        // Confident reads are pre-confirmed; low-confidence ones need a tap.
+        confirmed: c.presence_confidence >= CONFIRM_THRESHOLD,
+        detectedOwned: c.owned,
+      })),
+    )
+    setTotalCountInput('')
+    setTotalCountApplied(null)
+    setTotalCountError(null)
+    setOwnerName(data.owner_name ?? '')
+    setOwnerConfirmed((data.owner_name ?? null) !== null && data.owner_confidence >= CONFIRM_THRESHOLD)
+    setLastTappedIndex(null)
+    setSaveState('idle')
+    setSaveMsg(null)
+  }
+
+  async function loadBatchPage(id: string, pageNumber: number, totalPages: number, filename: string | null, msg: string | null) {
+    setStatus('uploading')
+    setErrorMsg(null)
+    setPreview(null)
+
+    try {
+      const res = await fetch('/api/scan-batch-page', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ batch_id: id, page_number: pageNumber }),
+      })
+      if (!res.ok) throw new Error(`Could not read sheet ${pageNumber} (${res.status})`)
+
+      const data: ScanBatchPageResult = await res.json()
+      applyCaptureResult(data)
+      setBatchId(id)
+      setBatchTotalPages(totalPages)
+      setBatchFilename(filename)
+      setCurrentPageNumber(pageNumber)
+      setBatchMsg(msg)
+      setStatus('done')
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : 'Unknown error')
+      setStatus('error')
+    }
+  }
+
+  function resumeBatch() {
+    if (!resumableBatch) return
+    const { batch, nextPage } = resumableBatch
+    setResumableBatch(null)
+    loadBatchPage(
+      batch.id,
+      nextPage,
+      batch.total_pages,
+      batch.original_filename,
+      `Resuming "${batch.original_filename ?? 'this upload'}" — sheet ${nextPage} of ${batch.total_pages}`,
+    )
+  }
+
+  // After a sheet is saved or skipped, finds the next pending page in the same
+  // batch and loads it automatically, or marks the whole batch completed once
+  // nothing is left.
+  async function goToNextBatchPageOrFinish(messagePrefix: string) {
+    if (!batchId || !batchTotalPages) return
+
+    const { data: next } = await supabase
+      .from('scan_batch_pages')
+      .select('page_number')
+      .eq('batch_id', batchId)
+      .eq('status', 'pending')
+      .order('page_number')
+      .limit(1)
+      .maybeSingle()
+
+    if (next) {
+      await loadBatchPage(
+        batchId,
+        next.page_number,
+        batchTotalPages,
+        batchFilename,
+        `${messagePrefix} — moving to sheet ${next.page_number} of ${batchTotalPages}.`,
+      )
+    } else {
+      await supabase.from('scan_batches').update({ status: 'completed' }).eq('id', batchId)
+      setBatchMsg(`${messagePrefix}. All ${batchTotalPages} sheets in this upload are done.`)
+      setStatus('idle')
+      setResult(null)
+      setCards([])
+      setBatchId(null)
+      setCurrentPageNumber(null)
+    }
+  }
+
+  async function skipCurrentPage() {
+    if (!batchId || !currentPageNumber || !batchTotalPages) return
+    await supabase
+      .from('scan_batch_pages')
+      .update({ status: 'skipped' })
+      .eq('batch_id', batchId)
+      .eq('page_number', currentPageNumber)
+    await goToNextBatchPageOrFinish(`Skipped sheet ${currentPageNumber} of ${batchTotalPages}`)
+  }
+
   async function handleFile(file: File) {
-    // PDFs (scanner output) can't be shown in an <img> preview the way photos
-    // can — skip the broken-image icon and just show nothing until results come back.
-    setPreview(file.type === 'application/pdf' ? null : URL.createObjectURL(file))
+    setBatchMsg(null)
+
+    if (file.type === 'application/pdf') {
+      // A PDF may hold several checklist sheets — always go through the batch flow
+      // for PDFs (even single-page ones), so storage/resume tracking is consistent.
+      // See api/scan-batch-create.ts.
+      setBatchId(null)
+      setBatchTotalPages(null)
+      setBatchFilename(null)
+      setCurrentPageNumber(null)
+      setPreview(null)
+      setStatus('uploading')
+      setErrorMsg(null)
+
+      try {
+        const formData = new FormData()
+        formData.append('file', file)
+        const res = await fetch('/api/scan-batch-create', { method: 'POST', body: formData })
+        if (!res.ok) throw new Error(`Could not start scan batch (${res.status})`)
+
+        const created: { batch_id: string; total_pages: number; original_filename: string | null } = await res.json()
+        await loadBatchPage(
+          created.batch_id,
+          1,
+          created.total_pages,
+          created.original_filename,
+          created.total_pages > 1 ? `Found ${created.total_pages} sheets in this upload.` : null,
+        )
+      } catch (err) {
+        setErrorMsg(err instanceof Error ? err.message : 'Unknown error')
+        setStatus('error')
+      }
+      return
+    }
+
+    // Plain photo/image upload — original single-shot flow, no batch tracking.
+    setBatchId(null)
+    setBatchTotalPages(null)
+    setBatchFilename(null)
+    setCurrentPageNumber(null)
+    setPreview(URL.createObjectURL(file))
     setStatus('uploading')
     setErrorMsg(null)
 
@@ -71,21 +264,7 @@ export default function Capture() {
       if (!res.ok) throw new Error(`Capture failed (${res.status})`)
 
       const data: VisionCaptureResult = await res.json()
-      setResult(data)
-      setRawCards(data.cards)
-      setCards(
-        data.cards.map((c) => ({
-          ...c,
-          // Confident reads are pre-confirmed; low-confidence ones need a tap.
-          confirmed: c.presence_confidence >= CONFIRM_THRESHOLD,
-          detectedOwned: c.owned,
-        })),
-      )
-      setTotalCountInput('')
-      setTotalCountApplied(null)
-      setTotalCountError(null)
-      setOwnerName(data.owner_name ?? '')
-      setOwnerConfirmed((data.owner_name ?? null) !== null && data.owner_confidence >= CONFIRM_THRESHOLD)
+      applyCaptureResult(data)
       setStatus('done')
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : 'Unknown error')
@@ -249,6 +428,17 @@ export default function Capture() {
           ? `Saved ${cardRows.length} cards — real player names auto-filled for ${namedCount}/${cardRows.length} from the bundled checklist.`
           : `Saved ${cardRows.length} cards. No bundled checklist found yet for ${result.year ?? '?'} ${result.manufacturer ?? 'this set'} — names are best-effort from the photo until one is added.`,
       )
+
+      // If this sheet came from a multi-page batch, mark it processed and move on
+      // to the next pending sheet automatically (or finish the batch).
+      if (batchId && currentPageNumber && batchTotalPages) {
+        await supabase
+          .from('scan_batch_pages')
+          .update({ status: 'processed', set_id: newSet.id, processed_at: new Date().toISOString() })
+          .eq('batch_id', batchId)
+          .eq('page_number', currentPageNumber)
+        await goToNextBatchPageOrFinish(`Saved sheet ${currentPageNumber} of ${batchTotalPages}`)
+      }
     } catch (err) {
       setSaveState('error')
       setSaveMsg(err instanceof Error ? err.message : 'Save failed')
@@ -262,6 +452,21 @@ export default function Capture() {
         Photograph a paper checklist (one sheet = one set) or a card front/back. Claude Vision
         will parse it into structured card data for you to review before saving.
       </p>
+
+      {resumableBatch && status === 'idle' && (
+        <div className="rounded-lg border border-indigo-300 dark:border-indigo-800 bg-indigo-50 dark:bg-indigo-950/30 p-3 flex items-center justify-between gap-3">
+          <p className="text-sm text-indigo-700 dark:text-indigo-300">
+            Unfinished scan: {resumableBatch.batch.original_filename ?? 'untitled upload'} — sheet{' '}
+            {resumableBatch.nextPage} of {resumableBatch.batch.total_pages} ({resumableBatch.pendingCount} left)
+          </p>
+          <button
+            onClick={resumeBatch}
+            className="text-xs px-3 py-1.5 rounded-md bg-indigo-600 text-white shrink-0"
+          >
+            Resume
+          </button>
+        </div>
+      )}
 
       <input
         ref={fileInputRef}
@@ -291,6 +496,16 @@ export default function Capture() {
 
       {status === 'done' && result && (
         <div className="rounded-lg border border-slate-200 dark:border-slate-800 p-4 space-y-3">
+          {batchId && batchTotalPages && (
+            <p className="text-xs text-slate-400">
+              Sheet {currentPageNumber} of {batchTotalPages} in this upload
+              {batchFilename ? ` (${batchFilename})` : ''}
+            </p>
+          )}
+          {batchMsg && (
+            <p className="text-xs text-indigo-600 dark:text-indigo-300">{batchMsg}</p>
+          )}
+
           <p className="text-sm">
             Detected set:{' '}
             <span className="font-medium">{result.detected_set_name ?? 'Not detected'}</span>{' '}
@@ -541,19 +756,30 @@ export default function Capture() {
             </ul>
           )}
 
-          <button
-            onClick={handleSave}
-            disabled={!readyToSave || saveState === 'saving' || saveState === 'saved'}
-            className="w-full text-xs px-3 py-2 rounded-md bg-indigo-600 text-white disabled:opacity-40"
-          >
-            {saveState === 'saving'
-              ? 'Saving…'
-              : saveState === 'saved'
-                ? 'Saved'
-                : readyToSave
-                  ? 'Save to collection'
-                  : 'Confirm all flagged cards to save'}
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={handleSave}
+              disabled={!readyToSave || saveState === 'saving' || saveState === 'saved'}
+              className="flex-1 text-xs px-3 py-2 rounded-md bg-indigo-600 text-white disabled:opacity-40"
+            >
+              {saveState === 'saving'
+                ? 'Saving…'
+                : saveState === 'saved'
+                  ? 'Saved'
+                  : readyToSave
+                    ? 'Save to collection'
+                    : 'Confirm all flagged cards to save'}
+            </button>
+
+            {batchId && saveState !== 'saving' && saveState !== 'saved' && (
+              <button
+                onClick={skipCurrentPage}
+                className="shrink-0 text-xs px-3 py-2 rounded-md border border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300"
+              >
+                Skip this sheet
+              </button>
+            )}
+          </div>
 
           {saveMsg && (
             <p className={`text-xs ${saveState === 'error' ? 'text-red-500' : 'text-slate-500'}`}>

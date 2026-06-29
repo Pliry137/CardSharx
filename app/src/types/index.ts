@@ -94,3 +94,33 @@ export interface VisionCaptureResult {
     owned: boolean
   }>
 }
+
+// Mirrors supabase/migrations/0008_scan_batches.sql. A batch tracks one multi-page
+// PDF upload (e.g. a whole binder scanned at once) so its sheets can be reviewed/
+// saved one at a time and resumed later, from any device.
+export interface ScanBatch {
+  id: string
+  created_at: string
+  original_filename: string | null
+  total_pages: number
+  storage_path: string
+  status: 'in_progress' | 'completed'
+  owner: string | null
+}
+
+export interface ScanBatchPage {
+  id: string
+  batch_id: string
+  page_number: number
+  status: 'pending' | 'processed' | 'skipped'
+  set_id: string | null
+  processed_at: string | null
+}
+
+// Shape returned by api/scan-batch-page.ts — the same fields as VisionCaptureResult
+// plus which batch/page they came from.
+export interface ScanBatchPageResult extends VisionCaptureResult {
+  batch_id: string
+  page_number: number
+  total_pages: number
+}
