@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom'
 import type { SetWithProgress } from '../types'
+import ChecklistStatusBadge from './ChecklistStatusBadge'
 
 function formatCurrency(value: number) {
   return value.toLocaleString('en-US', { style: 'currency', currency: 'USD' })
@@ -13,7 +14,10 @@ export default function SetProgressCard({ set }: { set: SetWithProgress }) {
     >
       <div className="flex items-center justify-between">
         <div>
-          <h3 className="font-medium">{set.name}</h3>
+          <div className="flex items-center gap-1.5">
+            <h3 className="font-medium">{set.name}</h3>
+            <ChecklistStatusBadge sport={set.collection_type} year={set.year} manufacturer={set.manufacturer} />
+          </div>
           <p className="text-sm text-slate-500">
             {set.year ?? '—'} · {set.manufacturer ?? 'Unknown manufacturer'}
           </p>

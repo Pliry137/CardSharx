@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import type { Card, CardCondition, CardSet, CollectionType } from '../types'
 import { COLUMNS_PER_ROW, cardNumberForCell } from '../lib/checklistGrid'
+import ChecklistStatusBadge from '../components/ChecklistStatusBadge'
 
 interface CardRow extends Card {
   latest_price: number | null
@@ -275,7 +276,10 @@ export default function SetDetail() {
     <div className="space-y-4">
       <div className="flex items-start justify-between">
         <div>
-          <h1 className="text-xl font-semibold">{set.name}</h1>
+          <div className="flex items-center gap-2">
+            <h1 className="text-xl font-semibold">{set.name}</h1>
+            <ChecklistStatusBadge sport={sport} year={set.year} manufacturer={set.manufacturer} />
+          </div>
           <p className="text-sm text-slate-500">
             {set.year ?? '—'} · {set.manufacturer ?? 'Unknown manufacturer'}
           </p>

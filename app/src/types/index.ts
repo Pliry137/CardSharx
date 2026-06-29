@@ -59,11 +59,15 @@ export interface DataSourceConfig {
 // Derived / view-model types used by the dashboard
 
 export interface SetWithProgress extends CardSet {
+  collection_type: CollectionType
   owned_count: number
   total_value: number
   owned_value: number
   completion_pct: number
 }
+
+// Mirrors the GET /api/checklist-lookup status-check response (api/checklist-lookup.ts).
+export type ChecklistGenerationStatus = 'none' | 'pending' | 'ready' | 'failed'
 
 // One row per owner, aggregated across all of their sets (see owner_summary
 // view in supabase/migrations/0004_owner.sql)
