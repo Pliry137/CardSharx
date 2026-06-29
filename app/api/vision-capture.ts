@@ -24,8 +24,12 @@ export const config = {
   },
 }
 
-// Vision-capable Claude model.
-const MODEL = 'claude-sonnet-4-6'
+// Vision-capable Claude model. Switched from claude-sonnet-4-6 to Haiku 4.5 to cut
+// per-run cost roughly 3x (Sonnet was costing ~$0.04/run). Haiku is less reliable at
+// fiddly visual judgment calls than Sonnet, so if scattered-blank misses (like the
+// #121/#154/#215 cases that prompted the scratchpad-forcing prompt below) come back
+// or get worse, that's the first thing to revert.
+const MODEL = 'claude-haiku-4-5-20251001'
 
 // Vercel Serverless Functions cap request bodies (4.5MB on Hobby/Pro as of writing).
 // A typical phone photo of a checklist sheet can exceed that — if uploads start
@@ -158,7 +162,11 @@ async function callClaudeVision(base64Image: string, mimeType: AnthropicImageMed
   const message = await client.messages.create({
     model: MODEL,
     max_tokens: 8192,
-    system: SYSTEM_PROMPT,
+    // The system prompt is identical on every call (it's not per-image), so mark it
+    // cacheable — after the first call, repeat calls pay ~10% of the normal input-token
+    // rate for this block instead of full price. Cache entries expire after 5 min of
+    // disuse, so this mainly helps when scanning several sheets in one sitting.
+    system: [{ type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }],
     messages: [
       {
         role: 'user',
