@@ -16,7 +16,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node'
 import Anthropic from '@anthropic-ai/sdk'
 import { IncomingForm, type File as FormidableFile } from 'formidable'
 import { readFile } from 'node:fs/promises'
-import { COLUMNS_PER_ROW, buildCardsFromGrid, type UncertainCell } from './lib/standardChecklistGrid'
+import { COLUMNS_PER_ROW, buildCardsFromGrid, type UncertainCell } from './lib/standardChecklistGrid.js'
 
 export const config = {
   api: {

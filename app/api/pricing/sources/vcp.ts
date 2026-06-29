@@ -2,7 +2,7 @@
 // non-sport sets (Desert Storm, etc.) per CardCollector.md — start here since it's the
 // most accessible of the non-sport sources.
 
-import type { PriceLookupInput, PriceLookupResult, PricingSource } from './types'
+import type { PriceLookupInput, PriceLookupResult, PricingSource } from './types.js'
 
 async function lookup(input: PriceLookupInput): Promise<PriceLookupResult | null> {
   // TODO: scrape vintagecardprices.com for a matching card/set and return its aggregated price.

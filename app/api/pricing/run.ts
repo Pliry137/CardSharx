@@ -10,11 +10,11 @@
 
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { createClient } from '@supabase/supabase-js'
-import { beckettSource } from './sources/beckett'
-import { psaSource } from './sources/psa'
-import { vcpSource } from './sources/vcp'
-import { ebaySource } from './sources/ebay'
-import type { PricingSource } from './sources/types'
+import { beckettSource } from './sources/beckett.js'
+import { psaSource } from './sources/psa.js'
+import { vcpSource } from './sources/vcp.js'
+import { ebaySource } from './sources/ebay.js'
+import type { PricingSource } from './sources/types.js'
 
 const sourcesByName: Record<string, PricingSource> = {
   beckett: beckettSource,
