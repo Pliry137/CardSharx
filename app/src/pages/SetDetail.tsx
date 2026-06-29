@@ -1,10 +1,19 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
-import type { Card, CardSet } from '../types'
+import type { Card, CardCondition, CardSet } from '../types'
 
 interface CardRow extends Card {
   latest_price: number | null
+}
+
+type OwnedFilter = 'all' | 'owned' | 'missing'
+type ConditionFilter = 'all' | CardCondition
+
+const CONDITION_LABEL: Record<CardCondition, string> = {
+  good: 'Good',
+  damaged: 'Damaged',
+  poor: 'Poor',
 }
 
 export default function SetDetail() {
@@ -18,6 +27,16 @@ export default function SetDetail() {
   // show a quick spinner-ish state instead of locking the whole page.
   const [togglingCardId, setTogglingCardId] = useState<string | null>(null)
   const [toggleError, setToggleError] = useState<string | null>(null)
+
+  // List filters — purely client-side over the already-loaded cards array, since a
+  // set tops out around a few hundred cards (no need to re-query Supabase per filter).
+  const [ownedFilter, setOwnedFilter] = useState<OwnedFilter>('all')
+  const [conditionFilter, setConditionFilter] = useState<ConditionFilter>('all')
+
+  // condition update is its own per-card async action, separate from the owned toggle,
+  // so a card can be flipped owned/missing and have its condition changed independently.
+  const [updatingConditionId, setUpdatingConditionId] = useState<string | null>(null)
+  const [conditionError, setConditionError] = useState<string | null>(null)
 
   // Delete-set confirmation flow. Deleting a set is permanent (cascades to its cards
   // and price history via the FK constraints in 0001_init.sql) so it's gated behind
@@ -97,6 +116,25 @@ export default function SetDetail() {
     setTogglingCardId(null)
   }
 
+  // Same optimistic-update-with-rollback pattern as toggleOwned — a condition change
+  // is just as easily reversible (pick a different option), so no confirmation needed.
+  async function setCondition(card: CardRow, condition: CardCondition) {
+    if (condition === card.condition) return
+    setConditionError(null)
+    setUpdatingConditionId(card.id)
+    const previous = card.condition
+
+    setCards((prev) => prev.map((c) => (c.id === card.id ? { ...c, condition } : c)))
+
+    const { error } = await supabase.from('cards').update({ condition }).eq('id', card.id)
+
+    if (error) {
+      setCards((prev) => prev.map((c) => (c.id === card.id ? { ...c, condition: previous } : c)))
+      setConditionError(`Couldn't update #${card.card_number} (${error.message})`)
+    }
+    setUpdatingConditionId(null)
+  }
+
   async function deleteSet() {
     if (!setId || !set) return
     setDeleting(true)
@@ -121,10 +159,21 @@ export default function SetDetail() {
     setDeleteError(null)
   }
 
+  const missing = useMemo(() => cards.filter((c) => !c.owned), [cards])
+
+  const visibleCards = useMemo(
+    () =>
+      cards.filter((c) => {
+        if (ownedFilter === 'owned' && !c.owned) return false
+        if (ownedFilter === 'missing' && c.owned) return false
+        if (conditionFilter !== 'all' && c.condition !== conditionFilter) return false
+        return true
+      }),
+    [cards, ownedFilter, conditionFilter],
+  )
+
   if (loading) return <p className="text-sm text-slate-400">Loading set…</p>
   if (!set) return <p className="text-sm text-slate-400">Set not found.</p>
-
-  const missing = cards.filter((c) => !c.owned)
 
   return (
     <div className="space-y-4">
@@ -156,17 +205,52 @@ export default function SetDetail() {
         {cards.filter((c) => c.owned).length} / {set.total_card_count ?? cards.length} owned ·{' '}
         {missing.length} missing
       </p>
-      <p className="text-xs text-slate-400">Click a card to mark it owned / not owned.</p>
+
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="flex rounded-md border border-slate-300 dark:border-slate-700 overflow-hidden text-xs">
+          {(['all', 'owned', 'missing'] as const).map((f) => (
+            <button
+              key={f}
+              onClick={() => setOwnedFilter(f)}
+              className={`px-2.5 py-1 capitalize ${
+                ownedFilter === f
+                  ? 'bg-indigo-600 text-white'
+                  : 'bg-transparent text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+              }`}
+            >
+              {f}
+            </button>
+          ))}
+        </div>
+        <select
+          value={conditionFilter}
+          onChange={(e) => setConditionFilter(e.target.value as ConditionFilter)}
+          className="text-xs border border-slate-300 dark:border-slate-700 rounded-md px-2 py-1 bg-transparent"
+        >
+          <option value="all">Any condition</option>
+          <option value="good">Good only</option>
+          <option value="damaged">Damaged only</option>
+          <option value="poor">Poor only</option>
+        </select>
+        <span className="text-xs text-slate-400">
+          {visibleCards.length} of {cards.length} shown
+        </span>
+      </div>
+
+      <p className="text-xs text-slate-400">
+        Click a card to mark it owned / not owned. Use the dropdown on the right to flag condition.
+      </p>
       {toggleError && <p className="text-sm text-red-500">{toggleError}</p>}
+      {conditionError && <p className="text-sm text-red-500">{conditionError}</p>}
 
       <ul className="divide-y divide-slate-200 dark:divide-slate-800 rounded-lg border border-slate-200 dark:border-slate-800">
-        {cards.map((card) => (
-          <li key={card.id}>
+        {visibleCards.map((card) => (
+          <li key={card.id} className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-slate-50 dark:hover:bg-slate-900">
             <button
               type="button"
               onClick={() => toggleOwned(card)}
               disabled={togglingCardId === card.id}
-              className="w-full flex items-center justify-between px-3 py-2 text-sm text-left hover:bg-slate-50 dark:hover:bg-slate-900 disabled:opacity-50"
+              className="flex-1 flex items-center justify-between text-left disabled:opacity-50"
             >
               <div className="flex items-center gap-3">
                 <span className={card.owned ? '' : 'text-slate-400'}>#{card.card_number}</span>
@@ -182,6 +266,17 @@ export default function SetDetail() {
                 >
                   {togglingCardId === card.id ? 'saving…' : card.owned ? 'owned' : 'missing'}
                 </span>
+                {card.condition !== 'good' && (
+                  <span
+                    className={`text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded ${
+                      card.condition === 'poor'
+                        ? 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-400'
+                        : 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400'
+                    }`}
+                  >
+                    {CONDITION_LABEL[card.condition]}
+                  </span>
+                )}
               </div>
               <span className="text-slate-500">
                 {card.latest_price != null
@@ -189,8 +284,22 @@ export default function SetDetail() {
                   : '—'}
               </span>
             </button>
+            <select
+              value={card.condition}
+              disabled={updatingConditionId === card.id}
+              onClick={(e) => e.stopPropagation()}
+              onChange={(e) => setCondition(card, e.target.value as CardCondition)}
+              className="text-xs border border-slate-300 dark:border-slate-700 rounded-md px-1.5 py-1 bg-transparent disabled:opacity-50"
+            >
+              <option value="good">Good</option>
+              <option value="damaged">Damaged</option>
+              <option value="poor">Poor</option>
+            </select>
           </li>
         ))}
+        {visibleCards.length === 0 && cards.length > 0 && (
+          <li className="px-3 py-3 text-sm text-slate-400">No cards match the current filters.</li>
+        )}
         {cards.length === 0 && (
           <li className="px-3 py-3 text-sm text-slate-400">
             No cards in this set yet. Scan a checklist from the Capture tab.
