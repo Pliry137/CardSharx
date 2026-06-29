@@ -99,3 +99,9 @@ A mobile-first web app to digitize and manage a physical trading card collection
 ## Reference: Prior Related Projects (for pattern reuse)
 - **Dive In** (Henry's diving app): Supabase + React + Tailwind, hosted on Vercel; includes a custom scraper (DiveMeets.com) for historical data import.
 - **Fuel Log**: Uses Claude API with image input to convert a photo into structured data for logging.
+
+---
+
+## Backlog
+1. **Automated import of player names** — when a new set is scanned/imported, look up and fill in real player/subject names for each card automatically instead of leaving placeholder values (currently only works when the set already has a bundled checklist in `api/_lib/checklists/`; needs a broader automated source/lookup so this works for sets that haven't been manually sourced yet).
+2. **Beckett pricing guide imports** — pull both the official checklist (full set, what *should* exist) and per-card pricing from Beckett for sports sets, per the "Pricing Data" section above. `api/pricing/sources/beckett.ts` currently exists but returns no real data yet (no scraping logic implemented) — see "Beckett scraping risk" under Open Considerations before building this.
