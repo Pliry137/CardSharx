@@ -5,6 +5,15 @@
   "functions": {
     "api/checklist-lookup.ts": {
       "includeFiles": "api/_lib/checklists/**"
+    },
+    "api/vision-capture.ts": {
+      "includeFiles": "node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs"
+    },
+    "api/scan-batch-create.ts": {
+      "includeFiles": "node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs"
+    },
+    "api/scan-batch-page.ts": {
+      "includeFiles": "node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs"
     }
   }
 }
