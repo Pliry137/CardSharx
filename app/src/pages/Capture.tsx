@@ -38,6 +38,10 @@ export default function Capture() {
   // so corrections can be made by tapping cells in place rather than scrolling a
   // long list — useful since the vision read is the part most likely to be wrong.
   const [reviewView, setReviewView] = useState<'grid' | 'list'>('grid')
+  // On phones the grid is too narrow to show a 3-digit number per cell, so cells
+  // become plain color swatches there — this tracks the last tapped one so we can
+  // show "#121 — Claude: missing, now: present" as text instead.
+  const [lastTappedIndex, setLastTappedIndex] = useState<number | null>(null)
 
   async function handleFile(file: File) {
     setPreview(URL.createObjectURL(file))
@@ -324,47 +328,65 @@ export default function Capture() {
           {reviewView === 'grid' ? (
             <div className="space-y-2">
               <p className="text-xs text-slate-400">
-                Laid out like the checklist sheet (32 per row). Tap any cell to flip it.
+                Laid out like the checklist sheet (32 per row). Tap any cell to flip it. On a narrow
+                screen the cells are too small to print numbers on — tap one and its number shows
+                below the grid.
               </p>
-              <div className="overflow-x-auto">
-                <div
-                  className="inline-grid gap-px bg-slate-200 dark:bg-slate-800 p-px rounded"
-                  style={{ gridTemplateColumns: `repeat(${COLUMNS_PER_ROW}, minmax(22px, 1fr))` }}
-                >
-                  {Array.from({ length: gridRows }).flatMap((_, rowIdx) =>
-                    Array.from({ length: COLUMNS_PER_ROW }).map((__, colIdx) => {
-                      const row = rowIdx + 1
-                      const col = colIdx + 1
-                      const num = cardNumberForCell(row, col)
-                      const idx = cardIndexByNumber.get(String(num))
+              {/* No horizontal scrolling: columns are `1fr` (no minimum px width) so the whole
+                  32-wide grid always shrinks to fit the screen. On phones that makes each cell
+                  small — by design, the trade-off for keeping the full sheet visible at once
+                  instead of scrolling left/right to find a card. */}
+              <div
+                className="grid w-full gap-px bg-slate-200 dark:bg-slate-800 p-px rounded"
+                style={{ gridTemplateColumns: `repeat(${COLUMNS_PER_ROW}, minmax(0, 1fr))` }}
+              >
+                {Array.from({ length: gridRows }).flatMap((_, rowIdx) =>
+                  Array.from({ length: COLUMNS_PER_ROW }).map((__, colIdx) => {
+                    const row = rowIdx + 1
+                    const col = colIdx + 1
+                    const num = cardNumberForCell(row, col)
+                    const idx = cardIndexByNumber.get(String(num))
 
-                      if (idx === undefined) {
-                        return (
-                          <div key={`${row}-${col}`} className="aspect-square bg-white dark:bg-slate-950" />
-                        )
-                      }
-
-                      const c = cards[idx]
+                    if (idx === undefined) {
                       return (
-                        <button
-                          key={`${row}-${col}`}
-                          type="button"
-                          onClick={() => toggleOwned(idx)}
-                          title={`#${c.card_number} — Claude read: ${c.detectedOwned ? 'present' : 'missing'}`}
-                          className={`aspect-square text-[9px] leading-none flex items-center justify-center ${
-                            c.owned
-                              ? 'bg-emerald-500 text-white'
-                              : 'bg-slate-300 dark:bg-slate-700 text-slate-600 dark:text-slate-200'
-                          } ${!c.confirmed ? 'ring-2 ring-amber-400 ring-inset' : ''}`}
-                        >
-                          {c.card_number}
-                        </button>
+                        <div key={`${row}-${col}`} className="aspect-square bg-white dark:bg-slate-950" />
                       )
-                    }),
-                  )}
-                </div>
+                    }
+
+                    const c = cards[idx]
+                    return (
+                      <button
+                        key={`${row}-${col}`}
+                        type="button"
+                        onClick={() => {
+                          toggleOwned(idx)
+                          setLastTappedIndex(idx)
+                        }}
+                        aria-label={`Card ${c.card_number}, Claude read ${c.detectedOwned ? 'present' : 'missing'}, currently ${c.owned ? 'present' : 'missing'}`}
+                        className={`aspect-square min-w-0 text-[8px] sm:text-[10px] leading-none flex items-center justify-center overflow-hidden ${
+                          c.owned
+                            ? 'bg-emerald-500 text-white'
+                            : 'bg-slate-300 dark:bg-slate-700 text-slate-600 dark:text-slate-200'
+                        } ${!c.confirmed ? 'ring-2 ring-amber-400 ring-inset' : ''} ${
+                          lastTappedIndex === idx ? 'outline outline-2 outline-indigo-500' : ''
+                        }`}
+                      >
+                        <span className="hidden sm:inline">{c.card_number}</span>
+                      </button>
+                    )
+                  }),
+                )}
               </div>
-              <p className="text-xs text-slate-400 flex items-center gap-3">
+
+              {lastTappedIndex !== null && cards[lastTappedIndex] && (
+                <p className="text-xs bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 rounded px-2 py-1">
+                  #{cards[lastTappedIndex].card_number} {cards[lastTappedIndex].player_or_subject_name} —
+                  Claude read: {cards[lastTappedIndex].detectedOwned ? 'present' : 'missing'}, now set to:{' '}
+                  <strong>{cards[lastTappedIndex].owned ? 'present' : 'missing'}</strong>
+                </p>
+              )}
+
+              <p className="text-xs text-slate-400 flex items-center gap-3 flex-wrap">
                 <span className="inline-flex items-center gap-1">
                   <span className="inline-block w-2.5 h-2.5 rounded-sm bg-emerald-500" /> present
                 </span>
