@@ -1,22 +1,33 @@
 // Vercel serverless function: POST /api/vision-capture
 //
 // Accepts a multipart form upload with an `image` field (photo of a paper checklist,
-// or a card front/back) and returns structured card data parsed by the Claude Vision API.
-// This follows the same photo -> Claude API call -> structured data pattern used by the
-// Fuel Log project.
+// or a card front/back), sends it to Claude (vision-capable model) with a structured
+// extraction prompt, and returns the parsed checklist/card data to the frontend
+// (src/pages/Capture.tsx).
 //
-// NOT WIRED TO A LIVE ANTHROPIC KEY YET — this is a stub with the intended prompt/response
-// contract filled in so the frontend (src/pages/Capture.tsx) has something concrete to call
-// against. Wire up ANTHROPIC_API_KEY in .env and replace `mockVisionCall` with a real call.
+// Requires ANTHROPIC_API_KEY to be set in the Vercel project's environment variables
+// (and in a local .env for `vercel dev`). Without it, this returns a clear 500 rather
+// than silently failing.
 
 import type { VercelRequest, VercelResponse } from '@vercel/node'
-import { Buffer } from 'node:buffer'
+import Anthropic from '@anthropic-ai/sdk'
+import { IncomingForm, type File as FormidableFile } from 'formidable'
+import { readFile } from 'node:fs/promises'
 
 export const config = {
   api: {
     bodyParser: false,
   },
 }
+
+// Vision-capable Claude model. See system prompt note in ENV docs for current model strings.
+const MODEL = 'claude-sonnet-4-6'
+
+// Vercel Serverless Functions cap request bodies (4.5MB on Hobby/Pro as of writing).
+// A typical phone photo of a checklist sheet can exceed that — if uploads start
+// failing with a 413, the fix is to downscale/compress the image client-side
+// (e.g. via a canvas resize) in Capture.tsx before the fetch, not here.
+const MAX_UPLOAD_BYTES = 15 * 1024 * 1024
 
 const SYSTEM_PROMPT = `You are looking at either:
 (a) a paper checklist for a trading card set, or
@@ -33,7 +44,8 @@ just give one confidence for the whole set. Marks that are faint, smudged,
 overlapping an adjacent cell, or ambiguous should get a low confidence score
 so the app can ask a human to confirm them rather than silently guessing.
 
-Extract structured data and return ONLY valid JSON matching this shape:
+Extract structured data and return ONLY valid JSON (no markdown fences, no
+commentary before or after) matching this shape:
 {
   "detected_set_name": string | null,
   "detected_set_confidence": number,   // 0.0–1.0, how confident you are in the set match
@@ -56,38 +68,103 @@ detected_set_confidence to a low value (< 0.5) rather than guessing — the app 
 fall back to letting the user pick the set manually. The same rule applies to
 owner_name and to each card's presence_confidence: when in doubt, score it low
 rather than asserting a guess. Cards below the confirmation threshold (see
-Capture.tsx, default 0.85) will be shown to the user to confirm by hand.`
+Capture.tsx, default 0.85) will be shown to the user to confirm by hand.
 
-async function readBody(req: VercelRequest): Promise<{ base64: string; mimeType: string }> {
-  // In production: parse the multipart form (e.g. with `formidable` or `busboy`),
-  // pull out the `image` file field, and base64-encode it for the Claude API's
-  // image content block. Left unimplemented here since there's no live key to call yet.
-  throw new Error('Multipart parsing not yet implemented — see TODO in api/vision-capture.ts')
+If a checklist's player/subject names aren't printed (common on blank numeric
+checklist templates), use the card_number as a placeholder for
+player_or_subject_name — the app fills in real names afterward from a separate
+checklist lookup, so don't invent or guess names you can't actually read.`
+
+type AnthropicImageMediaType = 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp'
+
+function normalizeMediaType(mimeType: string | null): AnthropicImageMediaType {
+  if (mimeType === 'image/png' || mimeType === 'image/gif' || mimeType === 'image/webp') {
+    return mimeType
+  }
+  return 'image/jpeg'
 }
 
-async function callClaudeVision(_base64Image: string, _mimeType: string) {
-  const apiKey = process.env.ANTHROPIC_API_KEY
-  if (!apiKey) {
-    throw new Error('ANTHROPIC_API_KEY not set')
+interface ParsedImage {
+  base64: string
+  mimeType: AnthropicImageMediaType
+}
+
+async function readBody(req: VercelRequest): Promise<ParsedImage> {
+  const form = new IncomingForm({ maxFileSize: MAX_UPLOAD_BYTES })
+
+  const { files } = await new Promise<{ fields: Record<string, unknown>; files: Record<string, unknown> }>(
+    (resolve, reject) => {
+      form.parse(req as unknown as Parameters<typeof form.parse>[0], (err, fields, files) => {
+        if (err) reject(err)
+        else resolve({ fields, files })
+      })
+    },
+  )
+
+  const fileField = files.image as FormidableFile | FormidableFile[] | undefined
+  const file = Array.isArray(fileField) ? fileField[0] : fileField
+  if (!file) {
+    throw new Error('No "image" field found in the upload')
   }
 
-  // TODO: real implementation —
-  // const client = new Anthropic({ apiKey })
-  // const message = await client.messages.create({
-  //   model: 'claude-sonnet-4-5',
-  //   max_tokens: 2048,
-  //   system: SYSTEM_PROMPT,
-  //   messages: [{
-  //     role: 'user',
-  //     content: [
-  //       { type: 'image', source: { type: 'base64', media_type: mimeType, data: base64Image } },
-  //       { type: 'text', text: 'Extract the checklist/card data as JSON.' },
-  //     ],
-  //   }],
-  // })
-  // return JSON.parse(message.content[0].text)
+  const buffer = await readFile(file.filepath)
+  return {
+    base64: buffer.toString('base64'),
+    mimeType: normalizeMediaType(file.mimetype),
+  }
+}
 
-  throw new Error('callClaudeVision not yet implemented')
+function extractJson(raw: string): unknown {
+  // Despite instructions, models sometimes wrap JSON in markdown fences — strip them
+  // before parsing rather than failing the whole capture over formatting.
+  const cleaned = raw
+    .trim()
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/```\s*$/, '')
+    .trim()
+
+  try {
+    return JSON.parse(cleaned)
+  } catch {
+    throw new Error("Could not parse Claude's response as JSON")
+  }
+}
+
+async function callClaudeVision(base64Image: string, mimeType: AnthropicImageMediaType) {
+  const apiKey = process.env.ANTHROPIC_API_KEY
+  if (!apiKey) {
+    throw new Error('ANTHROPIC_API_KEY is not set — add it to the Vercel project env vars')
+  }
+
+  const client = new Anthropic({ apiKey })
+
+  const message = await client.messages.create({
+    model: MODEL,
+    max_tokens: 4096,
+    system: SYSTEM_PROMPT,
+    messages: [
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'image',
+            source: { type: 'base64', media_type: mimeType, data: base64Image },
+          },
+          {
+            type: 'text',
+            text: 'Extract the checklist/card data as JSON, following the schema in your system instructions exactly.',
+          },
+        ],
+      },
+    ],
+  })
+
+  const textBlock = message.content.find((block) => block.type === 'text')
+  if (!textBlock || textBlock.type !== 'text') {
+    throw new Error('Claude did not return a text response')
+  }
+
+  return extractJson(textBlock.text)
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -101,10 +178,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const result = await callClaudeVision(base64, mimeType)
     res.status(200).json(result)
   } catch (err) {
-    // Stubbed endpoint — surface a clear "not implemented" error rather than a vague 500
-    // until the multipart parsing + live Anthropic call are filled in.
-    res.status(501).json({
-      error: err instanceof Error ? err.message : 'Vision capture not yet implemented',
+    console.error('vision-capture error:', err)
+    res.status(500).json({
+      error: err instanceof Error ? err.message : 'Vision capture failed',
     })
   }
 }
