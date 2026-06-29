@@ -39,11 +39,17 @@ You do NOT need to read the small printed numbers inside each cell — the app c
 
 1. Read the header fields near the top of the sheet: "Year", "Company" (manufacturer), any handwritten owner name (often initials or a first name in a corner), and any handwritten note giving the set's total card count (e.g. "660 total cards"). Any of these can be missing — use null rather than guessing.
 
-2. For each row of the grid, top to bottom, classify each of its ${COLUMNS_PER_ROW} cells by COLOR, not by shape. Owned cards are marked with red ink (a red X, red checkmark, or red fill) over the cell. Don't try to recognize the shape of the mark — just judge whether the cell contains a noticeable amount of red, versus a cell that is plain white/cardstock with only black printed text (the number and possibly black grid lines) and no red. Report each row as a ${COLUMNS_PER_ROW}-character string of '1' (red present in that cell) and '0' (no red, plain white/black-only cell), left to right. Include every row that has any printed cells, even if entirely unmarked. If a row near the bottom of the sheet has fewer than ${COLUMNS_PER_ROW} printed cells, still return a ${COLUMNS_PER_ROW}-character string — pad the unused trailing positions with '0'.
+2. On most sheets the large majority of cells are marked — unmarked (blank, not-owned) cells are the rare exception, scattered one at a time among long runs of marked cells. This means they are very easy to skim past if you judge a row "at a glance": a single blank cell in the middle of 31 marked ones does not visually stand out the way you'd expect, and it's a real, common mistake to round it up to "all marked." Do NOT classify a row holistically. Treat finding the rare blanks as the actual point of this task.
+
+To avoid that mistake, work through the grid row by row, and for EACH row, before writing anything else, look at each of its ${COLUMNS_PER_ROW} cells one at a time, left to right, as if you were running your finger across them, and silently note whether each individual cell has a noticeable amount of red ink (marked) or is plain white/cardstock with only black printed text and no red (unmarked) — judged on that cell's own pixels, never assumed from its neighbors. Only after deliberately checking all ${COLUMNS_PER_ROW} cells in a row should you write that row's result.
+
+Then report each row as a ${COLUMNS_PER_ROW}-character string of '1' (red present) and '0' (no red), left to right. Include every row that has any printed cells, even if entirely unmarked. If a row near the bottom of the sheet has fewer than ${COLUMNS_PER_ROW} printed cells, still return a ${COLUMNS_PER_ROW}-character string — pad the unused trailing positions with '0'.
 
 3. Separately list specific cell positions (1-indexed row/col, where row 1 is the top printed row and col 1 is the leftmost cell in that row) where the red/no-red call is genuinely hard to make — e.g. a very faint pink tinge, a shadow that could look reddish, or red ink from an adjacent cell bleeding into this one — with your confidence for that one cell (0.0-1.0, low = uncertain). Only list cells you're actually unsure about; most cells are either clearly red or clearly plain white, and don't need to be listed. An empty list is expected and fine if every cell is clear.
 
-Return ONLY valid JSON (no markdown fences, no commentary before or after) matching this shape:
+First, write a brief plain-text scratchpad: for each row, in order, list the column numbers (1-${COLUMNS_PER_ROW}) of any cell you judged unmarked in that row (write "none" if every cell in that row is marked). This is your evidence that you actually checked every cell individually instead of skimming. Keep it terse — just row number and the list of unmarked columns, nothing else.
+
+Then, after the scratchpad, write the line FINAL JSON: followed by ONLY valid JSON (no markdown fences, no commentary) matching this shape, which must be consistent with your scratchpad above:
 {
   "year": number | null,
   "manufacturer": string | null,
@@ -96,10 +102,13 @@ async function readBody(req: VercelRequest): Promise<ParsedImage> {
 }
 
 function extractJson(raw: string): unknown {
-  // Despite instructions, models sometimes wrap JSON in markdown fences, or add a
-  // sentence of commentary before/after it. Strip fences, then fall back to slicing
-  // out the outermost {...} span so leading/trailing prose doesn't break the parse.
-  let cleaned = raw
+  // The prompt asks Claude to write a row-by-row scratchpad (to force it to actually
+  // check every cell instead of skimming the image) before the line "FINAL JSON:" and
+  // the real answer. Cut everything before that marker first, if present, so the
+  // scratchpad's own prose (which may legitimately contain stray braces, e.g. "row 4:
+  // none") never confuses the JSON parse below.
+  const markerIndex = raw.search(/FINAL JSON:?/i)
+  let cleaned = (markerIndex !== -1 ? raw.slice(markerIndex).replace(/FINAL JSON:?/i, '') : raw)
     .trim()
     .replace(/^```(?:json)?\s*/i, '')
     .replace(/```\s*$/, '')
