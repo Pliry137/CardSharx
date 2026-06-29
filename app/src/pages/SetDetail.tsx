@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
-import type { Card, CardCondition, CardSet } from '../types'
+import type { Card, CardCondition, CardSet, CollectionType } from '../types'
 import { COLUMNS_PER_ROW, cardNumberForCell } from '../lib/checklistGrid'
 
 interface CardRow extends Card {
@@ -21,9 +21,14 @@ export default function SetDetail() {
   const { setId } = useParams()
   const navigate = useNavigate()
   const [set, setSet] = useState<CardSet | null>(null)
+  // Looked up separately via the set's collection_id — checklist-lookup needs the sport,
+  // which isn't on the `sets` row itself (it lives on the parent `collections` row).
+  const [sport, setSport] = useState<CollectionType | null>(null)
   const [cards, setCards] = useState<CardRow[]>([])
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
+  const [refreshingNames, setRefreshingNames] = useState(false)
+  const [namesRefreshMsg, setNamesRefreshMsg] = useState<string | null>(null)
   // card.id of the row currently being saved, so we can disable just that row and
   // show a quick spinner-ish state instead of locking the whole page.
   const [togglingCardId, setTogglingCardId] = useState<string | null>(null)
@@ -68,7 +73,16 @@ export default function SetDetail() {
       ])
 
       if (cancelled) return
-      if (setRes.data) setSet(setRes.data as CardSet)
+      if (setRes.data) {
+        const loadedSet = setRes.data as CardSet
+        setSet(loadedSet)
+        const { data: collectionData } = await supabase
+          .from('collections')
+          .select('type')
+          .eq('id', loadedSet.collection_id)
+          .single()
+        if (!cancelled && collectionData) setSport(collectionData.type as CollectionType)
+      }
       if (cardsRes.data) {
         const sorted = [...(cardsRes.data as CardRow[])].sort((a, b) => {
           const an = parseInt(a.card_number, 10)
@@ -100,6 +114,63 @@ export default function SetDetail() {
       })
     } finally {
       setRefreshing(false)
+    }
+  }
+
+  // Backfills real player names onto cards that already exist in this set. This exists
+  // because checklist-lookup's tier-3 generation now runs in the background (api/checklist-
+  // lookup.ts, to avoid the 60s Vercel function timeout a synchronous generation call could
+  // hit) — the set's *original* save never gets those names, since generation wasn't done
+  // yet when it ran. This button re-runs the same lookup (now a fast cache hit once
+  // generation finishes) and writes any real names straight onto the existing card rows.
+  async function refreshNames() {
+    if (!set || !sport) return
+    setRefreshingNames(true)
+    setNamesRefreshMsg(null)
+    try {
+      const lookupRes = await fetch('/api/checklist-lookup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sport, year: set.year, manufacturer: set.manufacturer }),
+      })
+      if (!lookupRes.ok) {
+        setNamesRefreshMsg("Couldn't check for a checklist right now — try again shortly.")
+        return
+      }
+      const lookupData = await lookupRes.json()
+      if (!lookupData.found) {
+        setNamesRefreshMsg(
+          lookupData.generating
+            ? 'Still generating a checklist for this set in the background — try again in a minute or two.'
+            : 'No checklist found yet for this set.',
+        )
+        return
+      }
+      const names: Record<string, string> = lookupData.names ?? {}
+      const updates = cards.filter((c) => names[c.card_number] && names[c.card_number] !== c.player_or_subject_name)
+      if (updates.length === 0) {
+        setNamesRefreshMsg('Names are already up to date.')
+        return
+      }
+      const results = await Promise.all(
+        updates.map((c) => supabase.from('cards').update({ player_or_subject_name: names[c.card_number] }).eq('id', c.id)),
+      )
+      const failed = results.filter((r) => r.error)
+      setCards((prev) =>
+        prev.map((c) => (names[c.card_number] ? { ...c, player_or_subject_name: names[c.card_number] } : c)),
+      )
+      const sourceNote = lookupData.verified
+        ? 'the bundled checklist'
+        : 'a Claude-generated checklist (trained knowledge, not yet manually verified)'
+      setNamesRefreshMsg(
+        failed.length > 0
+          ? `Updated ${updates.length - failed.length}/${updates.length} card names from ${sourceNote} — ${failed.length} failed to save.`
+          : `Updated ${updates.length} card name${updates.length === 1 ? '' : 's'} from ${sourceNote}.`,
+      )
+    } catch {
+      setNamesRefreshMsg('Network error checking for a checklist.')
+    } finally {
+      setRefreshingNames(false)
     }
   }
 
@@ -211,6 +282,13 @@ export default function SetDetail() {
         </div>
         <div className="flex items-center gap-2">
           <button
+            onClick={refreshNames}
+            disabled={refreshingNames || !sport}
+            className="text-xs px-3 py-1.5 rounded-md border border-slate-300 dark:border-slate-700 disabled:opacity-50"
+          >
+            {refreshingNames ? 'Checking…' : 'Refresh names'}
+          </button>
+          <button
             onClick={refreshPricing}
             disabled={refreshing}
             className="text-xs px-3 py-1.5 rounded-md border border-slate-300 dark:border-slate-700 disabled:opacity-50"
@@ -230,6 +308,8 @@ export default function SetDetail() {
         {cards.filter((c) => c.owned).length} / {set.total_card_count ?? cards.length} owned ·{' '}
         {missing.length} missing
       </p>
+
+      {namesRefreshMsg && <p className="text-xs text-slate-500">{namesRefreshMsg}</p>}
 
       <div className="flex flex-wrap items-center gap-2">
         <div className="flex rounded-md border border-slate-300 dark:border-slate-700 overflow-hidden text-xs">
