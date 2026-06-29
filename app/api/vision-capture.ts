@@ -1,18 +1,22 @@
 // Vercel serverless function: POST /api/vision-capture
 //
-// Accepts a multipart form upload with an `image` field (photo of a paper checklist,
-// or a card front/back), sends it to Claude (vision-capable model) with a structured
-// extraction prompt, and returns the parsed checklist/card data to the frontend
-// (src/pages/Capture.tsx).
+// Accepts a multipart form upload with an `image` field — a photo of one
+// "Sports Card Inventory Checklist" sheet, the single fixed template Joe uses for
+// every set (confirmed: same physical form every time, see api/lib/standardChecklistGrid.ts).
+// Sends it to Claude, which reads the header fields and reports the marked/blank grid
+// as compact per-row bitstrings; the server then converts that into the full per-card
+// list using the template's known fixed geometry (no need for Claude to read the tiny
+// printed card numbers at all — far cheaper and more accurate than asking it to
+// transcribe every card as its own JSON object).
 //
 // Requires ANTHROPIC_API_KEY to be set in the Vercel project's environment variables
-// (and in a local .env for `vercel dev`). Without it, this returns a clear 500 rather
-// than silently failing.
+// (and in a local .env for `vercel dev`).
 
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 import Anthropic from '@anthropic-ai/sdk'
 import { IncomingForm, type File as FormidableFile } from 'formidable'
 import { readFile } from 'node:fs/promises'
+import { COLUMNS_PER_ROW, buildCardsFromGrid, type UncertainCell } from './lib/standardChecklistGrid'
 
 export const config = {
   api: {
@@ -20,7 +24,7 @@ export const config = {
   },
 }
 
-// Vision-capable Claude model. See system prompt note in ENV docs for current model strings.
+// Vision-capable Claude model.
 const MODEL = 'claude-sonnet-4-6'
 
 // Vercel Serverless Functions cap request bodies (4.5MB on Hobby/Pro as of writing).
@@ -29,51 +33,28 @@ const MODEL = 'claude-sonnet-4-6'
 // (e.g. via a canvas resize) in Capture.tsx before the fetch, not here.
 const MAX_UPLOAD_BYTES = 15 * 1024 * 1024
 
-const SYSTEM_PROMPT = `You are looking at either:
-(a) a paper checklist for a trading card set, or
-(b) the front or back of an individual trading card.
+const SYSTEM_PROMPT = `You are looking at a "Sports Card Inventory Checklist" — a single fixed template used for every sheet in this collection. The template has a printed grid: each row holds exactly ${COLUMNS_PER_ROW} numbered cells, read left to right, and rows are read top to bottom.
 
-If this is a paper checklist, it may also have a handwritten name in a
-corner of the page (e.g. "Joe", "Paul", "Tim", "Dan") identifying whose
-collection this checklist belongs to. Read that name if present.
+You do NOT need to read the small printed numbers inside each cell — the app computes every card's number automatically from its grid position. Your job is only:
 
-For each individual card slot on the checklist, determine whether it is
-marked present (an X or checkmark drawn in/over the cell) or absent (blank
-cell). Give your own confidence for EACH card's present/absent read — do not
-just give one confidence for the whole set. Marks that are faint, smudged,
-overlapping an adjacent cell, or ambiguous should get a low confidence score
-so the app can ask a human to confirm them rather than silently guessing.
+1. Read the header fields near the top of the sheet: "Year", "Company" (manufacturer), any handwritten owner name (often initials or a first name in a corner), and any handwritten note giving the set's total card count (e.g. "660 total cards"). Any of these can be missing — use null rather than guessing.
 
-Extract structured data and return ONLY valid JSON (no markdown fences, no
-commentary before or after) matching this shape:
+2. For each row of the grid, top to bottom, report whether each of its ${COLUMNS_PER_ROW} cells is marked (a red or dark X/checkmark drawn over the cell) or unmarked (blank), as a ${COLUMNS_PER_ROW}-character string of '1' (marked) and '0' (unmarked), left to right. Include every row that has any printed cells, even if entirely unmarked. If a row near the bottom of the sheet has fewer than ${COLUMNS_PER_ROW} printed cells, still return a ${COLUMNS_PER_ROW}-character string — pad the unused trailing positions with '0'.
+
+3. Separately list specific cell positions (1-indexed row/col, where row 1 is the top printed row and col 1 is the leftmost cell in that row) where the mark is smudged, faint, overlapping, or otherwise genuinely ambiguous, with your confidence for that one cell (0.0-1.0, low = uncertain). Only list cells you're actually unsure about — most marks on these sheets are a clean, unambiguous X or a clean blank, and don't need to be listed. An empty list is expected and fine if every cell is clear.
+
+Return ONLY valid JSON (no markdown fences, no commentary before or after) matching this shape:
 {
-  "detected_set_name": string | null,
-  "detected_set_confidence": number,   // 0.0–1.0, how confident you are in the set match
-  "manufacturer": string | null,        // e.g. "Topps", "Pro Set"
   "year": number | null,
-  "owner_name": string | null,          // handwritten name in the corner, if present
-  "owner_confidence": number,           // 0.0–1.0, confidence in the owner name read
-  "cards": [
-    {
-      "card_number": string,
-      "player_or_subject_name": string,
-      "owned": boolean,                 // true if marked present (X/check), false if blank
-      "presence_confidence": number     // 0.0–1.0, confidence in THIS card's owned read
-    }
+  "manufacturer": string | null,
+  "owner_name": string | null,
+  "owner_confidence": number,
+  "total_card_count": number | null,
+  "rows": string[],
+  "uncertain_cells": [
+    { "row": number, "col": number, "confidence": number }
   ]
-}
-
-If you cannot confidently identify the set, set detected_set_name to null and
-detected_set_confidence to a low value (< 0.5) rather than guessing — the app will
-fall back to letting the user pick the set manually. The same rule applies to
-owner_name and to each card's presence_confidence: when in doubt, score it low
-rather than asserting a guess. Cards below the confirmation threshold (see
-Capture.tsx, default 0.85) will be shown to the user to confirm by hand.
-
-If a checklist's player/subject names aren't printed (common on blank numeric
-checklist templates), use the card_number as a placeholder for
-player_or_subject_name — the app fills in real names afterward from a separate
-checklist lookup, so don't invent or guess names you can't actually read.`
+}`
 
 type AnthropicImageMediaType = 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp'
 
@@ -130,7 +111,23 @@ function extractJson(raw: string): unknown {
   }
 }
 
-async function callClaudeVision(base64Image: string, mimeType: AnthropicImageMediaType) {
+interface GridExtraction {
+  year: number | null
+  manufacturer: string | null
+  owner_name: string | null
+  owner_confidence: number
+  total_card_count: number | null
+  rows: string[]
+  uncertain_cells: UncertainCell[]
+}
+
+function isGridExtraction(value: unknown): value is GridExtraction {
+  if (!value || typeof value !== 'object') return false
+  const v = value as Record<string, unknown>
+  return Array.isArray(v.rows) && Array.isArray(v.uncertain_cells)
+}
+
+async function callClaudeVision(base64Image: string, mimeType: AnthropicImageMediaType): Promise<GridExtraction> {
   const apiKey = process.env.ANTHROPIC_API_KEY
   if (!apiKey) {
     throw new Error('ANTHROPIC_API_KEY is not set — add it to the Vercel project env vars')
@@ -152,7 +149,7 @@ async function callClaudeVision(base64Image: string, mimeType: AnthropicImageMed
           },
           {
             type: 'text',
-            text: 'Extract the checklist/card data as JSON, following the schema in your system instructions exactly.',
+            text: 'Read the header fields and the marked/blank grid as JSON, following the schema in your system instructions exactly.',
           },
         ],
       },
@@ -164,7 +161,11 @@ async function callClaudeVision(base64Image: string, mimeType: AnthropicImageMed
     throw new Error('Claude did not return a text response')
   }
 
-  return extractJson(textBlock.text)
+  const parsed = extractJson(textBlock.text)
+  if (!isGridExtraction(parsed)) {
+    throw new Error("Claude's response was missing the expected grid fields")
+  }
+  return parsed
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -175,8 +176,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   try {
     const { base64, mimeType } = await readBody(req)
-    const result = await callClaudeVision(base64, mimeType)
-    res.status(200).json(result)
+    const extraction = await callClaudeVision(base64, mimeType)
+
+    const cards = buildCardsFromGrid(extraction.rows, extraction.total_card_count, extraction.uncertain_cells)
+
+    res.status(200).json({
+      detected_set_name: null,
+      detected_set_confidence: extraction.year && extraction.manufacturer ? 0.9 : 0,
+      manufacturer: extraction.manufacturer,
+      year: extraction.year,
+      owner_name: extraction.owner_name,
+      owner_confidence: extraction.owner_confidence,
+      cards,
+    })
   } catch (err) {
     console.error('vision-capture error:', err)
     res.status(500).json({
