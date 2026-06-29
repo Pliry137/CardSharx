@@ -13,6 +13,7 @@
     "@anthropic-ai/sdk": "^0.32.1",
     "@napi-rs/canvas": "^0.1.65",
     "@supabase/supabase-js": "^2.108.2",
+    "@vercel/functions": "^1.6.0",
     "formidable": "^3.5.2",
     "pdfjs-dist": "^4.7.76",
     "react": "^19.2.7",

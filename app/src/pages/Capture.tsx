@@ -363,6 +363,10 @@ export default function Capture() {
       // came from Claude's auto-generated/cached fallback (api/checklist-lookup.ts tiers
       // 2-3) — those haven't been spot-checked against a real source yet.
       let checklistVerified = true
+      // True when checklist-lookup kicked off generation in the background instead of
+      // finding a cached/bundled checklist — names aren't ready yet, but should be cached
+      // for next time (api/checklist-lookup.ts tier 3, generated via waitUntil()).
+      let checklistGenerating = false
       try {
         const lookupRes = await fetch('/api/checklist-lookup', {
           method: 'POST',
@@ -377,6 +381,7 @@ export default function Capture() {
           const lookupData = await lookupRes.json()
           checklistFound = !!lookupData.found
           checklistVerified = lookupData.verified ?? true
+          checklistGenerating = !!lookupData.generating
           realNames = lookupData.names ?? {}
         }
       } catch {
@@ -439,7 +444,9 @@ export default function Capture() {
           ? checklistVerified
             ? `Saved ${cardRows.length} cards — real player names auto-filled for ${namedCount}/${cardRows.length} from the bundled checklist.`
             : `Saved ${cardRows.length} cards — real player names auto-filled for ${namedCount}/${cardRows.length} from a Claude-generated checklist (trained knowledge, not yet manually verified). Please double-check names before relying on them, especially for inserts/variations.`
-          : `Saved ${cardRows.length} cards. No checklist found yet for ${result.year ?? '?'} ${result.manufacturer ?? 'this set'} — names are best-effort from the photo until one is generated.`,
+          : checklistGenerating
+            ? `Saved ${cardRows.length} cards. No checklist for ${result.year ?? '?'} ${result.manufacturer ?? 'this set'} yet — Claude is generating one in the background now. Names are best-effort from the photo for this save; the next save/scan of this set will get real names automatically.`
+            : `Saved ${cardRows.length} cards. No checklist found yet for ${result.year ?? '?'} ${result.manufacturer ?? 'this set'} — names are best-effort from the photo until one is generated.`,
       )
 
       // If this sheet came from a multi-page batch, mark it processed and move on
