@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import type { Card, CardCondition, CardSet } from '../types'
+import { COLUMNS_PER_ROW, cardNumberForCell } from '../lib/checklistGrid'
 
 interface CardRow extends Card {
   latest_price: number | null
@@ -32,6 +33,12 @@ export default function SetDetail() {
   // set tops out around a few hundred cards (no need to re-query Supabase per filter).
   const [ownedFilter, setOwnedFilter] = useState<OwnedFilter>('all')
   const [conditionFilter, setConditionFilter] = useState<ConditionFilter>('all')
+
+  // Same template-style grid view used in the Capture review screen, so the same
+  // physical-sheet layout can be used here for quick include/exclude clicks after the
+  // set has already been saved, not just during the initial scan review.
+  const [view, setView] = useState<'list' | 'grid'>('list')
+  const [lastTappedCardId, setLastTappedCardId] = useState<string | null>(null)
 
   // condition update is its own per-card async action, separate from the owned toggle,
   // so a card can be flipped owned/missing and have its condition changed independently.
@@ -172,6 +179,24 @@ export default function SetDetail() {
     [cards, ownedFilter, conditionFilter],
   )
 
+  // Grid view always lays out every card at its true sheet position (cardNumberForCell)
+  // regardless of the active filters — pulling cards out would break the physical
+  // layout this view exists to mirror. Filtered-out cards are dimmed instead of hidden.
+  const cardIndexByNumber = useMemo(() => {
+    const map = new Map<string, number>()
+    cards.forEach((c, i) => map.set(c.card_number, i))
+    return map
+  }, [cards])
+
+  const visibleCardIds = useMemo(() => new Set(visibleCards.map((c) => c.id)), [visibleCards])
+
+  const gridRows = useMemo(() => {
+    const maxCardNumber = cards.reduce((max, c) => Math.max(max, parseInt(c.card_number, 10) || 0), 0)
+    return Math.max(1, Math.ceil(maxCardNumber / COLUMNS_PER_ROW) + 1)
+  }, [cards])
+
+  const lastTapped = cards.find((c) => c.id === lastTappedCardId) ?? null
+
   if (loading) return <p className="text-sm text-slate-400">Loading set…</p>
   if (!set) return <p className="text-sm text-slate-400">Set not found.</p>
 
@@ -235,15 +260,113 @@ export default function SetDetail() {
         <span className="text-xs text-slate-400">
           {visibleCards.length} of {cards.length} shown
         </span>
+        <div className="flex gap-1 ml-auto">
+          <button
+            onClick={() => setView('grid')}
+            className={`text-xs px-2 py-1 rounded-md border ${
+              view === 'grid'
+                ? 'bg-indigo-600 text-white border-indigo-600'
+                : 'border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300'
+            }`}
+          >
+            Grid
+          </button>
+          <button
+            onClick={() => setView('list')}
+            className={`text-xs px-2 py-1 rounded-md border ${
+              view === 'list'
+                ? 'bg-indigo-600 text-white border-indigo-600'
+                : 'border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300'
+            }`}
+          >
+            List
+          </button>
+        </div>
       </div>
 
-      <p className="text-xs text-slate-400">
-        Click a card to mark it owned / not owned. Use the dropdown on the right to flag condition.
-      </p>
       {toggleError && <p className="text-sm text-red-500">{toggleError}</p>}
       {conditionError && <p className="text-sm text-red-500">{conditionError}</p>}
 
-      <ul className="divide-y divide-slate-200 dark:divide-slate-800 rounded-lg border border-slate-200 dark:border-slate-800">
+      {view === 'grid' ? (
+        <div className="space-y-2">
+          <p className="text-xs text-slate-400">
+            Laid out like the checklist sheet (32 per row). Tap a cell to flip it owned / missing.
+            {(ownedFilter !== 'all' || conditionFilter !== 'all') &&
+              ' Cards outside the current filter are dimmed, not hidden, so the sheet layout stays intact.'}
+          </p>
+          <div
+            className="grid w-full gap-px bg-slate-200 dark:bg-slate-800 p-px rounded"
+            style={{ gridTemplateColumns: `repeat(${COLUMNS_PER_ROW}, minmax(0, 1fr))` }}
+          >
+            {Array.from({ length: gridRows }).flatMap((_, rowIdx) =>
+              Array.from({ length: COLUMNS_PER_ROW }).map((__, colIdx) => {
+                const row = rowIdx + 1
+                const col = colIdx + 1
+                const num = cardNumberForCell(row, col)
+                const idx = cardIndexByNumber.get(String(num))
+
+                if (idx === undefined) {
+                  return <div key={`${row}-${col}`} className="aspect-square bg-white dark:bg-slate-950" />
+                }
+
+                const c = cards[idx]
+                const dimmed = !visibleCardIds.has(c.id)
+                return (
+                  <button
+                    key={`${row}-${col}`}
+                    type="button"
+                    onClick={() => {
+                      toggleOwned(c)
+                      setLastTappedCardId(c.id)
+                    }}
+                    disabled={togglingCardId === c.id}
+                    aria-label={`Card ${c.card_number}, ${c.owned ? 'owned' : 'missing'}, condition ${c.condition}`}
+                    className={`aspect-square min-w-0 text-[8px] sm:text-[10px] leading-none flex items-center justify-center overflow-hidden disabled:opacity-50 ${
+                      c.owned ? 'bg-emerald-500 text-white' : 'bg-slate-300 dark:bg-slate-700 text-slate-600 dark:text-slate-200'
+                    } ${dimmed ? 'opacity-25' : ''} ${
+                      c.condition === 'poor'
+                        ? 'ring-2 ring-red-500 ring-inset'
+                        : c.condition === 'damaged'
+                          ? 'ring-2 ring-amber-400 ring-inset'
+                          : ''
+                    } ${lastTappedCardId === c.id ? 'outline outline-2 outline-indigo-500' : ''}`}
+                  >
+                    <span className="hidden sm:inline">{c.card_number}</span>
+                  </button>
+                )
+              }),
+            )}
+          </div>
+
+          {lastTapped && (
+            <p className="text-xs bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 rounded px-2 py-1">
+              #{lastTapped.card_number} {lastTapped.player_or_subject_name} — now set to:{' '}
+              <strong>{lastTapped.owned ? 'owned' : 'missing'}</strong>
+              {lastTapped.condition !== 'good' && <> ({CONDITION_LABEL[lastTapped.condition]})</>}
+            </p>
+          )}
+
+          <p className="text-xs text-slate-400 flex items-center gap-3 flex-wrap">
+            <span className="inline-flex items-center gap-1">
+              <span className="inline-block w-2.5 h-2.5 rounded-sm bg-emerald-500" /> owned
+            </span>
+            <span className="inline-flex items-center gap-1">
+              <span className="inline-block w-2.5 h-2.5 rounded-sm bg-slate-400" /> missing
+            </span>
+            <span className="inline-flex items-center gap-1">
+              <span className="inline-block w-2.5 h-2.5 rounded-sm ring-2 ring-amber-400 ring-inset" /> damaged
+            </span>
+            <span className="inline-flex items-center gap-1">
+              <span className="inline-block w-2.5 h-2.5 rounded-sm ring-2 ring-red-500 ring-inset" /> poor
+            </span>
+          </p>
+        </div>
+      ) : (
+        <>
+          <p className="text-xs text-slate-400">
+            Click a card to mark it owned / not owned. Use the dropdown on the right to flag condition.
+          </p>
+          <ul className="divide-y divide-slate-200 dark:divide-slate-800 rounded-lg border border-slate-200 dark:border-slate-800">
         {visibleCards.map((card) => (
           <li key={card.id} className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-slate-50 dark:hover:bg-slate-900">
             <button
@@ -305,7 +428,9 @@ export default function SetDetail() {
             No cards in this set yet. Scan a checklist from the Capture tab.
           </li>
         )}
-      </ul>
+          </ul>
+        </>
+      )}
 
       {showDeleteConfirm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
