@@ -24,6 +24,17 @@ export default function Capture() {
   const [status, setStatus] = useState<'idle' | 'uploading' | 'done' | 'error'>('idle')
   const [result, setResult] = useState<VisionCaptureResult | null>(null)
   const [cards, setCards] = useState<ReviewCard[]>([])
+  // Untouched copy of what the scan actually read, kept around so the total-count box
+  // below can re-derive `cards` repeatedly (e.g. user shrinks then grows the number)
+  // without ever re-running OMR or losing Claude's original per-cell read.
+  const [rawCards, setRawCards] = useState<VisionCaptureResult['cards']>([])
+  // The checklist template has up to 897 numbered slots, but most real sets are much
+  // smaller — this lets the user say "this set only has 12 cards" up front so they
+  // don't have to review/confirm hundreds of slots the set doesn't actually use.
+  // Purely a client-side filter over the already-scanned grid; never touches OMR.
+  const [totalCountInput, setTotalCountInput] = useState('')
+  const [totalCountApplied, setTotalCountApplied] = useState<number | null>(null)
+  const [totalCountError, setTotalCountError] = useState<string | null>(null)
   const [ownerName, setOwnerName] = useState('')
   const [ownerConfirmed, setOwnerConfirmed] = useState(false)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
@@ -61,6 +72,7 @@ export default function Capture() {
 
       const data: VisionCaptureResult = await res.json()
       setResult(data)
+      setRawCards(data.cards)
       setCards(
         data.cards.map((c) => ({
           ...c,
@@ -69,6 +81,9 @@ export default function Capture() {
           detectedOwned: c.owned,
         })),
       )
+      setTotalCountInput('')
+      setTotalCountApplied(null)
+      setTotalCountError(null)
       setOwnerName(data.owner_name ?? '')
       setOwnerConfirmed((data.owner_name ?? null) !== null && data.owner_confidence >= CONFIRM_THRESHOLD)
       setStatus('done')
@@ -102,6 +117,51 @@ export default function Capture() {
 
   function confirmCard(index: number) {
     setCards((prev) => prev.map((c, i) => (i === index ? { ...c, confirmed: true } : c)))
+  }
+
+  // Re-derives the working `cards` list to cover exactly card numbers 1..n, dropping
+  // any scanned slot above the real set size and adding placeholders for any number
+  // below it that the scan didn't produce (e.g. a row near the bottom got cut off).
+  // Re-running this with a different number is always safe — it reads from `rawCards`
+  // (the original scan) and the current `cards` (to preserve any manual flips already
+  // made), never from OMR, so the underlying scan is never touched.
+  function applyTotalCount() {
+    const n = parseInt(totalCountInput, 10)
+    if (!Number.isFinite(n) || n <= 0) {
+      setTotalCountError('Enter a whole number greater than 0')
+      return
+    }
+    setTotalCountError(null)
+
+    const currentByNumber = new Map(cards.map((c) => [Number(c.card_number), c]))
+    const rawByNumber = new Map(rawCards.map((c) => [Number(c.card_number), c]))
+
+    const next: ReviewCard[] = []
+    for (let num = 1; num <= n; num++) {
+      const existing = currentByNumber.get(num)
+      if (existing) {
+        next.push(existing)
+        continue
+      }
+      const raw = rawByNumber.get(num)
+      if (raw) {
+        next.push({ ...raw, confirmed: raw.presence_confidence >= CONFIRM_THRESHOLD, detectedOwned: raw.owned })
+        continue
+      }
+      // Never scanned at all (rare — only if the set's real size exceeds what the
+      // sheet's grid covers) — add as a low-confidence "missing" placeholder so it's
+      // visible for manual confirmation rather than silently absent.
+      next.push({
+        card_number: String(num),
+        player_or_subject_name: String(num),
+        presence_confidence: 0.4,
+        owned: false,
+        confirmed: false,
+        detectedOwned: false,
+      })
+    }
+    setCards(next)
+    setTotalCountApplied(n)
   }
 
   async function handleSave() {
@@ -245,6 +305,42 @@ export default function Capture() {
               Couldn't auto-detect the set — you'll be able to pick it manually before saving.
             </p>
           )}
+
+          {/* Total card count override — the printed template has up to 897 numbered
+              slots, but most real sets are much smaller. Set this first so the review
+              views below only ever show the cards that actually exist in this set,
+              instead of needing to confirm every unused slot on the sheet. Purely a
+              client-side filter over the already-scanned grid — never re-runs OMR. */}
+          <div className="rounded-md bg-slate-50 dark:bg-slate-900 p-3 space-y-2">
+            <p className="text-sm">
+              How many cards are in this set?{' '}
+              <span className="text-xs text-slate-400">
+                (the scan found {rawCards.length} slots on the sheet — set this lower if the real set is
+                smaller)
+              </span>
+            </p>
+            <div className="flex gap-2 items-center">
+              <input
+                type="number"
+                min={1}
+                value={totalCountInput}
+                onChange={(e) => setTotalCountInput(e.target.value)}
+                placeholder={String(rawCards.length)}
+                className="text-sm border border-slate-300 dark:border-slate-700 rounded-md px-2 py-1 bg-transparent w-28"
+              />
+              <button
+                onClick={applyTotalCount}
+                disabled={!totalCountInput.trim()}
+                className="text-xs px-3 py-1.5 rounded-md bg-indigo-600 text-white disabled:opacity-40"
+              >
+                Apply
+              </button>
+              {totalCountApplied !== null && (
+                <span className="text-xs text-slate-400">Showing cards 1–{totalCountApplied}</span>
+              )}
+            </div>
+            {totalCountError && <p className="text-xs text-red-500">{totalCountError}</p>}
+          </div>
 
           {/* Sport / collection type — Vision can't tell this from a blank numeric
               checklist template, and it determines both which collection the set files
