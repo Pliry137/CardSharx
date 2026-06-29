@@ -25,6 +25,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node'
 import Anthropic from '@anthropic-ai/sdk'
 import { IncomingForm, type File as FormidableFile } from 'formidable'
 import { readFile } from 'node:fs/promises'
+import sharp from 'sharp'
 import { buildCardsFromGrid } from './lib/standardChecklistGrid.js'
 import { readGridFromImage } from './lib/checklistOmr.js'
 import { rasterizeFirstPdfPage } from './lib/pdfToImage.js'
@@ -109,6 +110,20 @@ async function toRasterImage(upload: ParsedUpload): Promise<{ buffer: Buffer; mi
   return { buffer: upload.buffer, mimeType: normalizeMediaType(upload.mimeType) }
 }
 
+// Anthropic caps inline image uploads at 10MB and downsamples anything over ~1568px
+// on the long edge anyway, so a full 300-DPI scan (often 2500x3300+, 10-15MB as PNG)
+// is both rejected outright and wasted resolution. The grid OMR still reads the
+// full-res buffer directly — only this copy, sent to Claude for header-field OCR,
+// needs shrinking.
+const VISION_MAX_DIMENSION = 1568
+
+async function shrinkForVisionApi(buffer: Buffer): Promise<Buffer> {
+  return sharp(buffer)
+    .resize({ width: VISION_MAX_DIMENSION, height: VISION_MAX_DIMENSION, fit: 'inside', withoutEnlargement: true })
+    .png()
+    .toBuffer()
+}
+
 function extractJson(raw: string): unknown {
   const markerIndex = raw.search(/FINAL JSON:?/i)
   let cleaned = (markerIndex !== -1 ? raw.slice(markerIndex).replace(/FINAL JSON:?/i, '') : raw)
@@ -190,11 +205,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     const upload = await readBody(req)
     const image = await toRasterImage(upload)
+    const visionImage = { buffer: await shrinkForVisionApi(image.buffer), mimeType: 'image/png' as const }
 
-    // Header OCR (Claude) and grid OMR (deterministic, local) are independent —
-    // run them concurrently rather than paying for both round trips in series.
+    // Header OCR (Claude, shrunk copy) and grid OMR (deterministic, full-res buffer)
+    // are independent — run them concurrently rather than paying for both round
+    // trips in series.
     const [header, grid] = await Promise.all([
-      readHeaderFields(image),
+      readHeaderFields(visionImage),
       readGridFromImage(image.buffer, null),
     ])
 
