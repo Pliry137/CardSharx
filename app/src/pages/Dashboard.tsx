@@ -90,7 +90,7 @@ export default function Dashboard() {
               onClick={() => setTypeFilter(t)}
               className={`text-xs px-3 py-1.5 rounded-full border ${
                 typeFilter === t
-                  ? 'bg-indigo-600 text-white border-indigo-600'
+                  ? 'bg-brand-600 text-white border-brand-600'
                   : 'border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300'
               }`}
             >
@@ -116,7 +116,7 @@ export default function Dashboard() {
             onClick={() => setOwnerFilter('all')}
             className={`text-xs px-3 py-1.5 rounded-full border ${
               ownerFilter === 'all'
-                ? 'bg-indigo-600 text-white border-indigo-600'
+                ? 'bg-brand-600 text-white border-brand-600'
                 : 'border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300'
             }`}
           >
@@ -128,7 +128,7 @@ export default function Dashboard() {
               onClick={() => setOwnerFilter(o)}
               className={`text-xs px-3 py-1.5 rounded-full border ${
                 ownerFilter === o
-                  ? 'bg-indigo-600 text-white border-indigo-600'
+                  ? 'bg-brand-600 text-white border-brand-600'
                   : 'border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300'
               }`}
             >

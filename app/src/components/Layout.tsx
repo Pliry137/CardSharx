@@ -1,4 +1,5 @@
 import { NavLink, Outlet } from 'react-router-dom'
+import logo from '../assets/cardsharx-logo.png'
 
 const tabs = [
   { to: '/', label: 'Dashboard' },
@@ -8,17 +9,17 @@ const tabs = [
 
 export default function Layout() {
   return (
-    <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
-      <header className="border-b border-slate-200 dark:border-slate-800 px-4 py-3 flex items-center justify-between">
-        <span className="font-semibold text-lg tracking-tight">CardSharx</span>
-        <span className="text-xs text-slate-400">collection inventory & valuation</span>
+    <div className="min-h-screen flex flex-col bg-brand-ice text-brand-950 dark:bg-brand-950 dark:text-brand-ice">
+      <header className="border-b border-brand-300/30 dark:border-brand-800 px-4 py-2 flex items-center justify-between">
+        <img src={logo} alt="CardSharx" className="h-10 w-auto" />
+        <span className="text-xs text-brand-600 dark:text-brand-cyan">collection inventory & valuation</span>
       </header>
 
       <main className="flex-1 px-4 py-4 pb-20 max-w-3xl w-full mx-auto">
         <Outlet />
       </main>
 
-      <nav className="fixed bottom-0 left-0 right-0 border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 flex justify-around py-2 max-w-3xl mx-auto w-full">
+      <nav className="fixed bottom-0 left-0 right-0 border-t border-brand-300/30 dark:border-brand-800 bg-white dark:bg-brand-950 flex justify-around py-2 max-w-3xl mx-auto w-full">
         {tabs.map((tab) => (
           <NavLink
             key={tab.to}
@@ -26,7 +27,7 @@ export default function Layout() {
             className={({ isActive }) =>
               `text-sm px-3 py-1.5 rounded-md ${
                 isActive
-                  ? 'text-indigo-600 dark:text-indigo-400 font-medium'
+                  ? 'text-brand-600 dark:text-brand-cyan font-medium'
                   : 'text-slate-500'
               }`
             }

@@ -474,14 +474,14 @@ export default function Capture() {
       </p>
 
       {resumableBatch && status === 'idle' && (
-        <div className="rounded-lg border border-indigo-300 dark:border-indigo-800 bg-indigo-50 dark:bg-indigo-950/30 p-3 flex items-center justify-between gap-3">
-          <p className="text-sm text-indigo-700 dark:text-indigo-300">
+        <div className="rounded-lg border border-brand-300 dark:border-brand-800 bg-brand-50 dark:bg-brand-950/30 p-3 flex items-center justify-between gap-3">
+          <p className="text-sm text-brand-700 dark:text-brand-300">
             Unfinished scan: {resumableBatch.batch.original_filename ?? 'untitled upload'} — sheet{' '}
             {resumableBatch.nextPage} of {resumableBatch.batch.total_pages} ({resumableBatch.pendingCount} left)
           </p>
           <button
             onClick={resumeBatch}
-            className="text-xs px-3 py-1.5 rounded-md bg-indigo-600 text-white shrink-0"
+            className="text-xs px-3 py-1.5 rounded-md bg-brand-600 text-white shrink-0"
           >
             Resume
           </button>
@@ -523,7 +523,7 @@ export default function Capture() {
             </p>
           )}
           {batchMsg && (
-            <p className="text-xs text-indigo-600 dark:text-indigo-300">{batchMsg}</p>
+            <p className="text-xs text-brand-600 dark:text-brand-300">{batchMsg}</p>
           )}
 
           <p className="text-sm">
@@ -566,7 +566,7 @@ export default function Capture() {
               <button
                 onClick={applyTotalCount}
                 disabled={!totalCountInput.trim()}
-                className="text-xs px-3 py-1.5 rounded-md bg-indigo-600 text-white disabled:opacity-40"
+                className="text-xs px-3 py-1.5 rounded-md bg-brand-600 text-white disabled:opacity-40"
               >
                 Apply
               </button>
@@ -618,7 +618,7 @@ export default function Capture() {
                   <button
                     onClick={() => setOwnerConfirmed(true)}
                     disabled={!ownerName.trim()}
-                    className="text-xs px-3 py-1.5 rounded-md bg-indigo-600 text-white disabled:opacity-40"
+                    className="text-xs px-3 py-1.5 rounded-md bg-brand-600 text-white disabled:opacity-40"
                   >
                     Confirm
                   </button>
@@ -639,7 +639,7 @@ export default function Capture() {
                 onClick={() => setReviewView('grid')}
                 className={`text-xs px-2 py-1 rounded-md border ${
                   reviewView === 'grid'
-                    ? 'bg-indigo-600 text-white border-indigo-600'
+                    ? 'bg-brand-600 text-white border-brand-600'
                     : 'border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300'
                 }`}
               >
@@ -649,7 +649,7 @@ export default function Capture() {
                 onClick={() => setReviewView('list')}
                 className={`text-xs px-2 py-1 rounded-md border ${
                   reviewView === 'list'
-                    ? 'bg-indigo-600 text-white border-indigo-600'
+                    ? 'bg-brand-600 text-white border-brand-600'
                     : 'border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300'
                 }`}
               >
@@ -701,7 +701,7 @@ export default function Capture() {
                             ? 'bg-emerald-500 text-white'
                             : 'bg-slate-300 dark:bg-slate-700 text-slate-600 dark:text-slate-200'
                         } ${!c.confirmed ? 'ring-2 ring-amber-400 ring-inset' : ''} ${
-                          lastTappedIndex === idx ? 'outline outline-2 outline-indigo-500' : ''
+                          lastTappedIndex === idx ? 'outline outline-2 outline-brand-500' : ''
                         }`}
                       >
                         <span className="hidden sm:inline">{c.card_number}</span>
@@ -712,7 +712,7 @@ export default function Capture() {
               </div>
 
               {lastTappedIndex !== null && cards[lastTappedIndex] && (
-                <p className="text-xs bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 rounded px-2 py-1">
+                <p className="text-xs bg-brand-50 dark:bg-brand-950/40 text-brand-700 dark:text-brand-300 rounded px-2 py-1">
                   #{cards[lastTappedIndex].card_number} {cards[lastTappedIndex].player_or_subject_name} —
                   Claude read: {cards[lastTappedIndex].detectedOwned ? 'present' : 'missing'}, now set to:{' '}
                   <strong>{cards[lastTappedIndex].owned ? 'present' : 'missing'}</strong>
@@ -780,7 +780,7 @@ export default function Capture() {
             <button
               onClick={handleSave}
               disabled={!readyToSave || saveState === 'saving' || saveState === 'saved'}
-              className="flex-1 text-xs px-3 py-2 rounded-md bg-indigo-600 text-white disabled:opacity-40"
+              className="flex-1 text-xs px-3 py-2 rounded-md bg-brand-600 text-white disabled:opacity-40"
             >
               {saveState === 'saving'
                 ? 'Saving…'

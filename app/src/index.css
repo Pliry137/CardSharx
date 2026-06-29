@@ -1,5 +1,23 @@
 @import "tailwindcss";
 
+/* CardSharx brand palette — matched to the shark + cards logo. "brand" stands in for
+   the old default indigo scale (same shade numbers: 50/300/400/500/600/700/800/950),
+   plus two standalone accents (brand-cyan, brand-gold) used outside that scale. */
+@theme {
+  --color-brand-50: #eaf7f6;
+  --color-brand-300: #6fc4be;
+  --color-brand-400: #39a6a0;
+  --color-brand-500: #2b8f8a;
+  --color-brand-600: #1b6e72;
+  --color-brand-700: #155458;
+  --color-brand-800: #103f42;
+  --color-brand-950: #0f2533;
+
+  --color-brand-cyan: #9ce8e2;
+  --color-brand-ice: #f3fafb;
+  --color-brand-gold: #f2a93b;
+}
+
 :root {
   color-scheme: light dark;
 }

@@ -323,7 +323,7 @@ export default function SetDetail() {
               onClick={() => setOwnedFilter(f)}
               className={`px-2.5 py-1 capitalize ${
                 ownedFilter === f
-                  ? 'bg-indigo-600 text-white'
+                  ? 'bg-brand-600 text-white'
                   : 'bg-transparent text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
               }`}
             >
@@ -349,7 +349,7 @@ export default function SetDetail() {
             onClick={() => setView('grid')}
             className={`text-xs px-2 py-1 rounded-md border ${
               view === 'grid'
-                ? 'bg-indigo-600 text-white border-indigo-600'
+                ? 'bg-brand-600 text-white border-brand-600'
                 : 'border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300'
             }`}
           >
@@ -359,7 +359,7 @@ export default function SetDetail() {
             onClick={() => setView('list')}
             className={`text-xs px-2 py-1 rounded-md border ${
               view === 'list'
-                ? 'bg-indigo-600 text-white border-indigo-600'
+                ? 'bg-brand-600 text-white border-brand-600'
                 : 'border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300'
             }`}
           >
@@ -413,7 +413,7 @@ export default function SetDetail() {
                         : c.condition === 'damaged'
                           ? 'ring-2 ring-amber-400 ring-inset'
                           : ''
-                    } ${lastTappedCardId === c.id ? 'outline outline-2 outline-indigo-500' : ''}`}
+                    } ${lastTappedCardId === c.id ? 'outline outline-2 outline-brand-500' : ''}`}
                   >
                     <span className="hidden sm:inline">{c.card_number}</span>
                   </button>
@@ -423,7 +423,7 @@ export default function SetDetail() {
           </div>
 
           {lastTapped && (
-            <p className="text-xs bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 rounded px-2 py-1">
+            <p className="text-xs bg-brand-50 dark:bg-brand-950/40 text-brand-700 dark:text-brand-300 rounded px-2 py-1">
               #{lastTapped.card_number} {lastTapped.player_or_subject_name} — now set to:{' '}
               <strong>{lastTapped.owned ? 'owned' : 'missing'}</strong>
               {lastTapped.condition !== 'good' && <> ({CONDITION_LABEL[lastTapped.condition]})</>}

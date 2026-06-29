@@ -10,7 +10,7 @@ export default function SetProgressCard({ set }: { set: SetWithProgress }) {
   return (
     <Link
       to={`/sets/${set.id}`}
-      className="block rounded-lg border border-slate-200 dark:border-slate-800 p-4 hover:border-indigo-400 transition-colors"
+      className="block rounded-lg border border-slate-200 dark:border-slate-800 p-4 hover:border-brand-400 transition-colors"
     >
       <div className="flex items-center justify-between">
         <div>
@@ -30,7 +30,7 @@ export default function SetProgressCard({ set }: { set: SetWithProgress }) {
 
       <div className="mt-3 h-2 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
         <div
-          className="h-full bg-indigo-500"
+          className="h-full bg-brand-500"
           style={{ width: `${Math.min(100, set.completion_pct)}%` }}
         />
       </div>
