@@ -4,7 +4,8 @@
   ],
   "functions": {
     "api/checklist-lookup.ts": {
-      "includeFiles": "api/_lib/checklists/**"
+      "includeFiles": "api/_lib/checklists/**",
+      "maxDuration": 60
     },
     "api/vision-capture.ts": {
       "includeFiles": "node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs"
