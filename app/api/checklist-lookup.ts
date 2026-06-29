@@ -8,7 +8,7 @@
 // it's bundled here and every future scan of that same set auto-applies it.
 
 import type { VercelRequest, VercelResponse } from '@vercel/node'
-import { lookupChecklist } from './lib/checklistLookup.js'
+import { lookupChecklist } from './lib/checklistLookup'
 
 export default function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') {

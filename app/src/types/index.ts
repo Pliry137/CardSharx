@@ -22,15 +22,12 @@ export interface CardSet {
   created_at: string
 }
 
-export type CardCondition = 'good' | 'damaged' | 'poor'
-
 export interface Card {
   id: string
   set_id: string
   card_number: string
   player_or_subject_name: string
   owned: boolean
-  condition: CardCondition
   date_added: string | null
   notes: string | null
 }

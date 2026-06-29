@@ -1,20 +1,13 @@
 import { useMemo, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import type { CollectionType, VisionCaptureResult } from '../types'
-import { COLUMNS_PER_ROW, cardNumberForCell } from '../lib/checklistGrid'
 
 // Cards (and the owner name) read with confidence below this threshold get
 // flagged for the user to manually confirm present/absent before saving,
 // rather than silently trusting Claude's guess.
 const CONFIRM_THRESHOLD = 0.85
 
-type ReviewCard = VisionCaptureResult['cards'][number] & {
-  confirmed: boolean
-  // Claude's original read, captured once at parse time and never mutated — lets the
-  // review UI show "what Claude thinks" separately from whatever the user has since
-  // flipped `owned` to, instead of losing that signal the moment they correct it.
-  detectedOwned: boolean
-}
+type ReviewCard = VisionCaptureResult['cards'][number] & { confirmed: boolean }
 
 const COLLECTION_TYPES: CollectionType[] = ['baseball', 'football', 'basketball', 'non-sport']
 
@@ -34,14 +27,6 @@ export default function Capture() {
   const [collectionType, setCollectionType] = useState<CollectionType>('baseball')
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
   const [saveMsg, setSaveMsg] = useState<string | null>(null)
-  // Grid view lays the cards out 32-per-row to match the physical checklist sheet,
-  // so corrections can be made by tapping cells in place rather than scrolling a
-  // long list — useful since the vision read is the part most likely to be wrong.
-  const [reviewView, setReviewView] = useState<'grid' | 'list'>('grid')
-  // On phones the grid is too narrow to show a 3-digit number per cell, so cells
-  // become plain color swatches there — this tracks the last tapped one so we can
-  // show "#121 — Claude: missing, now: present" as text instead.
-  const [lastTappedIndex, setLastTappedIndex] = useState<number | null>(null)
 
   async function handleFile(file: File) {
     setPreview(URL.createObjectURL(file))
@@ -64,7 +49,6 @@ export default function Capture() {
           ...c,
           // Confident reads are pre-confirmed; low-confidence ones need a tap.
           confirmed: c.presence_confidence >= CONFIRM_THRESHOLD,
-          detectedOwned: c.owned,
         })),
       )
       setOwnerName(data.owner_name ?? '')
@@ -78,19 +62,6 @@ export default function Capture() {
 
   const needsReview = useMemo(() => cards.filter((c) => !c.confirmed), [cards])
   const readyToSave = needsReview.length === 0 && ownerConfirmed
-
-  // Maps a card_number to its index in `cards`, for the grid view to look up which
-  // card belongs at each (row, col) position computed via cardNumberForCell.
-  const cardIndexByNumber = useMemo(() => {
-    const map = new Map<string, number>()
-    cards.forEach((c, i) => map.set(c.card_number, i))
-    return map
-  }, [cards])
-
-  const gridRows = useMemo(() => {
-    const maxCardNumber = cards.reduce((max, c) => Math.max(max, parseInt(c.card_number, 10) || 0), 0)
-    return Math.max(1, Math.ceil(maxCardNumber / COLUMNS_PER_ROW) + 1)
-  }, [cards])
 
   function toggleOwned(index: number) {
     setCards((prev) =>
@@ -294,154 +265,51 @@ export default function Capture() {
             )}
           </div>
 
-          <div className="flex items-center justify-between gap-2">
-            <p className="text-sm text-slate-500">
-              {cards.length} cards parsed
-              {needsReview.length > 0 && (
-                <span className="text-amber-500"> — {needsReview.length} need your confirmation</span>
-              )}
-            </p>
-            <div className="flex gap-1 shrink-0">
-              <button
-                onClick={() => setReviewView('grid')}
-                className={`text-xs px-2 py-1 rounded-md border ${
-                  reviewView === 'grid'
-                    ? 'bg-indigo-600 text-white border-indigo-600'
-                    : 'border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300'
+          <p className="text-sm text-slate-500">
+            {cards.length} cards parsed
+            {needsReview.length > 0 && (
+              <span className="text-amber-500"> — {needsReview.length} need your confirmation</span>
+            )}
+          </p>
+
+          <ul className="text-sm max-h-64 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800">
+            {cards.map((c, i) => (
+              <li
+                key={i}
+                className={`py-1.5 flex items-center justify-between gap-2 ${
+                  !c.confirmed ? 'bg-amber-50 dark:bg-amber-950/30 -mx-1 px-1 rounded' : ''
                 }`}
               >
-                Grid
-              </button>
-              <button
-                onClick={() => setReviewView('list')}
-                className={`text-xs px-2 py-1 rounded-md border ${
-                  reviewView === 'list'
-                    ? 'bg-indigo-600 text-white border-indigo-600'
-                    : 'border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300'
-                }`}
-              >
-                List
-              </button>
-            </div>
-          </div>
-
-          {reviewView === 'grid' ? (
-            <div className="space-y-2">
-              <p className="text-xs text-slate-400">
-                Laid out like the checklist sheet (32 per row). Tap any cell to flip it. On a narrow
-                screen the cells are too small to print numbers on — tap one and its number shows
-                below the grid.
-              </p>
-              {/* No horizontal scrolling: columns are `1fr` (no minimum px width) so the whole
-                  32-wide grid always shrinks to fit the screen. On phones that makes each cell
-                  small — by design, the trade-off for keeping the full sheet visible at once
-                  instead of scrolling left/right to find a card. */}
-              <div
-                className="grid w-full gap-px bg-slate-200 dark:bg-slate-800 p-px rounded"
-                style={{ gridTemplateColumns: `repeat(${COLUMNS_PER_ROW}, minmax(0, 1fr))` }}
-              >
-                {Array.from({ length: gridRows }).flatMap((_, rowIdx) =>
-                  Array.from({ length: COLUMNS_PER_ROW }).map((__, colIdx) => {
-                    const row = rowIdx + 1
-                    const col = colIdx + 1
-                    const num = cardNumberForCell(row, col)
-                    const idx = cardIndexByNumber.get(String(num))
-
-                    if (idx === undefined) {
-                      return (
-                        <div key={`${row}-${col}`} className="aspect-square bg-white dark:bg-slate-950" />
-                      )
-                    }
-
-                    const c = cards[idx]
-                    return (
-                      <button
-                        key={`${row}-${col}`}
-                        type="button"
-                        onClick={() => {
-                          toggleOwned(idx)
-                          setLastTappedIndex(idx)
-                        }}
-                        aria-label={`Card ${c.card_number}, Claude read ${c.detectedOwned ? 'present' : 'missing'}, currently ${c.owned ? 'present' : 'missing'}`}
-                        className={`aspect-square min-w-0 text-[8px] sm:text-[10px] leading-none flex items-center justify-center overflow-hidden ${
-                          c.owned
-                            ? 'bg-emerald-500 text-white'
-                            : 'bg-slate-300 dark:bg-slate-700 text-slate-600 dark:text-slate-200'
-                        } ${!c.confirmed ? 'ring-2 ring-amber-400 ring-inset' : ''} ${
-                          lastTappedIndex === idx ? 'outline outline-2 outline-indigo-500' : ''
-                        }`}
-                      >
-                        <span className="hidden sm:inline">{c.card_number}</span>
-                      </button>
-                    )
-                  }),
-                )}
-              </div>
-
-              {lastTappedIndex !== null && cards[lastTappedIndex] && (
-                <p className="text-xs bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 rounded px-2 py-1">
-                  #{cards[lastTappedIndex].card_number} {cards[lastTappedIndex].player_or_subject_name} —
-                  Claude read: {cards[lastTappedIndex].detectedOwned ? 'present' : 'missing'}, now set to:{' '}
-                  <strong>{cards[lastTappedIndex].owned ? 'present' : 'missing'}</strong>
-                </p>
-              )}
-
-              <p className="text-xs text-slate-400 flex items-center gap-3 flex-wrap">
-                <span className="inline-flex items-center gap-1">
-                  <span className="inline-block w-2.5 h-2.5 rounded-sm bg-emerald-500" /> present
+                <span className="flex-1">
+                  #{c.card_number} <span className="text-slate-400">{c.player_or_subject_name}</span>
                 </span>
-                <span className="inline-flex items-center gap-1">
-                  <span className="inline-block w-2.5 h-2.5 rounded-sm bg-slate-400" /> missing
-                </span>
-                <span className="inline-flex items-center gap-1">
-                  <span className="inline-block w-2.5 h-2.5 rounded-sm ring-2 ring-amber-400 ring-inset" /> Claude
-                  unsure
-                </span>
-              </p>
-            </div>
-          ) : (
-            <ul className="text-sm max-h-64 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800">
-              {cards.map((c, i) => (
-                <li
-                  key={i}
-                  className={`py-1.5 flex items-center justify-between gap-2 ${
-                    !c.confirmed ? 'bg-amber-50 dark:bg-amber-950/30 -mx-1 px-1 rounded' : ''
-                  }`}
-                >
-                  <span className="flex-1">
-                    #{c.card_number} <span className="text-slate-400">{c.player_or_subject_name}</span>
-                  </span>
 
-                  <span className="text-[10px] text-slate-400 w-24 text-right shrink-0">
-                    Claude: {c.detectedOwned ? 'present' : 'missing'}
-                    {!c.confirmed && ' (?)'}
-                  </span>
-
-                  <span
-                    className={`text-xs w-14 text-right shrink-0 ${c.owned ? 'text-emerald-600' : 'text-slate-400'}`}
-                  >
+                {c.confirmed ? (
+                  <span className={c.owned ? 'text-emerald-600 text-xs' : 'text-slate-400 text-xs'}>
                     {c.owned ? 'Present' : 'Missing'}
                   </span>
-
-                  <button
-                    onClick={() => toggleOwned(i)}
-                    className="text-xs px-2 py-1 rounded-md bg-slate-500 text-white shrink-0"
-                  >
-                    Flip
-                  </button>
-
-                  {!c.confirmed && (
+                ) : (
+                  <span className="flex gap-1 items-center">
+                    <span className="text-xs text-amber-500">
+                      {c.owned ? 'Present?' : 'Missing?'}
+                    </span>
                     <button
                       onClick={() => confirmCard(i)}
-                      className="text-xs px-2 py-1 rounded-md bg-emerald-600 text-white shrink-0"
+                      className="text-xs px-2 py-1 rounded-md bg-emerald-600 text-white"
                     >
-                      Confirm
+                      Yes
                     </button>
-                  )}
-                </li>
-              ))}
-            </ul>
-          )}
+                    <button
+                      onClick={() => toggleOwned(i)}
+                      className="text-xs px-2 py-1 rounded-md bg-slate-500 text-white"
+                    >
+                      Flip
+                    </button>
+                  </span>
+                )}
+              </li>
+            ))}
+          </ul>
 
           <button
             onClick={handleSave}
