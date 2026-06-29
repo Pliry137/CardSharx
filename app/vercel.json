@@ -4,7 +4,7 @@
   ],
   "functions": {
     "api/checklist-lookup.ts": {
-      "includeFiles": "api/lib/checklists/**"
+      "includeFiles": "api/_lib/checklists/**"
     }
   }
 }

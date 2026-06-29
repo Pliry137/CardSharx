@@ -7,7 +7,7 @@
 // frequency, personal-use lookups only — not scheduled, not bulk, not redistributed. Review
 // Beckett's current Terms of Service before wiring this up for real use.
 
-import type { PriceLookupInput, PriceLookupResult, PricingSource } from './types'
+import type { PriceLookupInput, PriceLookupResult, PricingSource } from './types.js'
 
 async function lookup(input: PriceLookupInput): Promise<PriceLookupResult | null> {
   // TODO: real implementation —

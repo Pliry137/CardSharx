@@ -17,8 +17,8 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { IncomingForm, type File as FormidableFile } from 'formidable'
 import { readFile } from 'node:fs/promises'
-import { rasterizeFirstPdfPage } from './lib/pdfToImage.js'
-import { normalizeMediaType, runVisionPipeline, type AnthropicImageMediaType } from './lib/visionPipeline.js'
+import { rasterizeFirstPdfPage } from './_lib/pdfToImage.js'
+import { normalizeMediaType, runVisionPipeline, type AnthropicImageMediaType } from './_lib/visionPipeline.js'
 
 export const config = {
   api: {

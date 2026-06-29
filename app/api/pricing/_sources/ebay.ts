@@ -2,7 +2,7 @@
 // CardCollector.md. Noisier than Beckett/VCP aggregates (condition, seller, timing
 // variance) so this is a fallback rather than primary for anything with a better source.
 
-import type { PriceLookupInput, PriceLookupResult, PricingSource } from './types'
+import type { PriceLookupInput, PriceLookupResult, PricingSource } from './types.js'
 
 async function lookup(input: PriceLookupInput): Promise<PriceLookupResult | null> {
   // TODO: query eBay sold listings (scrape or eBay's Finding/Browse API if available) and
