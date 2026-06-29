@@ -45,6 +45,10 @@ export default function Capture() {
   const [collectionType, setCollectionType] = useState<CollectionType>('baseball')
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
   const [saveMsg, setSaveMsg] = useState<string | null>(null)
+  // True when the just-saved set's names came from Claude's auto-generated checklist
+  // fallback rather than the manually-sourced bundled library — drives the amber
+  // "please verify" styling on saveMsg below instead of the normal saved-gray.
+  const [checklistUnverified, setChecklistUnverified] = useState(false)
   // Grid view lays the cards out 32-per-row to match the physical checklist sheet,
   // so corrections can be made by tapping cells in place rather than scrolling a
   // long list — useful since the vision read is the part most likely to be wrong.
@@ -347,6 +351,7 @@ export default function Capture() {
     if (!result || !readyToSave) return
     setSaveState('saving')
     setSaveMsg(null)
+    setChecklistUnverified(false)
 
     try {
       // 1. Check the bundled checklist library for this exact sport/year/manufacturer.
@@ -354,6 +359,10 @@ export default function Capture() {
       //    real player names for every card number — no manual SQL, every time.
       let realNames: Record<string, string> = {}
       let checklistFound = false
+      // True for the bundled, manually-sourced checklist library; false when the names
+      // came from Claude's auto-generated/cached fallback (api/checklist-lookup.ts tiers
+      // 2-3) — those haven't been spot-checked against a real source yet.
+      let checklistVerified = true
       try {
         const lookupRes = await fetch('/api/checklist-lookup', {
           method: 'POST',
@@ -367,6 +376,7 @@ export default function Capture() {
         if (lookupRes.ok) {
           const lookupData = await lookupRes.json()
           checklistFound = !!lookupData.found
+          checklistVerified = lookupData.verified ?? true
           realNames = lookupData.names ?? {}
         }
       } catch {
@@ -423,10 +433,13 @@ export default function Capture() {
 
       const namedCount = cardRows.filter((c) => realNames[c.card_number]).length
       setSaveState('saved')
+      setChecklistUnverified(checklistFound && !checklistVerified)
       setSaveMsg(
         checklistFound
-          ? `Saved ${cardRows.length} cards — real player names auto-filled for ${namedCount}/${cardRows.length} from the bundled checklist.`
-          : `Saved ${cardRows.length} cards. No bundled checklist found yet for ${result.year ?? '?'} ${result.manufacturer ?? 'this set'} — names are best-effort from the photo until one is added.`,
+          ? checklistVerified
+            ? `Saved ${cardRows.length} cards — real player names auto-filled for ${namedCount}/${cardRows.length} from the bundled checklist.`
+            : `Saved ${cardRows.length} cards — real player names auto-filled for ${namedCount}/${cardRows.length} from a Claude-generated checklist (trained knowledge, not yet manually verified). Please double-check names before relying on them, especially for inserts/variations.`
+          : `Saved ${cardRows.length} cards. No checklist found yet for ${result.year ?? '?'} ${result.manufacturer ?? 'this set'} — names are best-effort from the photo until one is generated.`,
       )
 
       // If this sheet came from a multi-page batch, mark it processed and move on
@@ -782,7 +795,15 @@ export default function Capture() {
           </div>
 
           {saveMsg && (
-            <p className={`text-xs ${saveState === 'error' ? 'text-red-500' : 'text-slate-500'}`}>
+            <p
+              className={`text-xs ${
+                saveState === 'error'
+                  ? 'text-red-500'
+                  : checklistUnverified
+                    ? 'text-amber-600 dark:text-amber-400'
+                    : 'text-slate-500'
+              }`}
+            >
               {saveMsg}
             </p>
           )}
