@@ -13,7 +13,8 @@
 // with the shape { sport, year, manufacturer, total_card_count, source, names }.
 
 import { readFileSync, readdirSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 export interface ChecklistDataset {
   sport: string
@@ -24,7 +25,9 @@ export interface ChecklistDataset {
   names: Record<string, string>
 }
 
-const CHECKLISTS_DIR = join(__dirname, 'checklists')
+// __dirname doesn't exist in ES modules (this package.json has "type": "module") — this
+// is the ESM-safe equivalent, computed from the module's own URL instead.
+const CHECKLISTS_DIR = join(dirname(fileURLToPath(import.meta.url)), 'checklists')
 
 function slugify(value: string): string {
   return value
